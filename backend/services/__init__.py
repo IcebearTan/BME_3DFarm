@@ -6,6 +6,7 @@ from .credit_service import (
     AccountNotFoundError,
     InsufficientCreditError,
 )
+from .order_state import OrderStateMachine, InvalidTransitionError
 
 __all__ = [
     "CreditService",
@@ -13,4 +14,6 @@ __all__ = [
     "InvalidAmountError",
     "AccountNotFoundError",
     "InsufficientCreditError",
+    "OrderStateMachine",
+    "InvalidTransitionError",
 ]

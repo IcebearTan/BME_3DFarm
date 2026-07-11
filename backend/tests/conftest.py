@@ -19,6 +19,8 @@ from models import (
     CreditAccountModel,
     CreditTransactionModel,
     PrintOrderModel,
+    PrintEventModel,
+    BambuddyJobModel,
 )
 from services import CreditService
 
@@ -40,6 +42,9 @@ def app():
 def _clean_tables(app):
     """每个测试前清空相关表（按外键依赖顺序），保证隔离。"""
     with app.app_context():
+        # 按外键依赖顺序删（子表先于父表）
+        db.session.query(PrintEventModel).delete()
+        db.session.query(BambuddyJobModel).delete()
         db.session.query(CreditTransactionModel).delete()
         db.session.query(CreditAccountModel).delete()
         db.session.query(PrintOrderModel).delete()
