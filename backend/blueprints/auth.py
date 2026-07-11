@@ -10,6 +10,7 @@ from flask_jwt_extended import create_access_token, jwt_required
 
 from exts import db
 from models import UserModel
+from services import CreditService
 from . import _current_user, audit_log
 
 bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -32,6 +33,9 @@ def register():
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
+
+    # 注册即建空 credit 账户（客户可立即查余额；订单操作前账户必然存在）
+    CreditService.ensure_account(user.id)
 
     token = create_access_token(identity=email)
     return jsonify({

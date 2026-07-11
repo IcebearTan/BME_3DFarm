@@ -23,3 +23,6 @@ Thumbs.db
 data/
 uploads/
 migrations/versions/__pycache__/
+
+# 本地验证脚本（连开发库走真实 HTTP，不提交）
+backend/dev_*.py

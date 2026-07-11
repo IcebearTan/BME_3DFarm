@@ -21,3 +21,6 @@ httpx>=0.28,<1
 minio>=7.2,<8
 python-dotenv>=1.0,<2
 pyyaml>=6.0,<7
+
+# Test (ASCII comments only - Windows gbk decode workaround)
+pytest>=8.0,<9
