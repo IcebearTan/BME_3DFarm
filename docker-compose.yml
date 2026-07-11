@@ -1,0 +1,87 @@
+# BME_3DFarm 本地开发编排：MySQL + Redis + MinIO + backend + worker + beat
+#
+# 注意：
+# - Bambuddy 不在本 compose 内。它需要在能访问打印机的局域网主机上以 host 网络模式单独部署，
+#   详见 docs/reference/bambuddy_technical_explainer.md §3。
+# - 本地开发时，先 cp backend/.env_example backend/.env 并填好，再 docker compose up。
+version: "3.8"
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_NAME:-bme_3dfarm}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  backend:
+    build: ./backend
+    command: python app.py
+    env_file: ./backend/.env
+    ports:
+      - "5002:5002"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - mysql
+      - redis
+      - minio
+
+  worker:
+    build: ./backend
+    command: celery -A celery_app.celery worker --loglevel=info
+    env_file: ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+      - mysql
+
+  beat:
+    build: ./backend
+    command: celery -A celery_app.celery beat --loglevel=info
+    env_file: ./backend/.env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+
+  # Bambuddy：打印机底座（官方镜像）。clone 本仓库后 docker compose up 即一并启动，
+  # 无需单独 clone bambuddy 源码。BME_3DFarm 通过 httpx 调它的 REST API。
+  bambuddy:
+    image: ghcr.io/maziggy/bambuddy:latest   # 生产建议锁具体版本 (>=0.2.4.5)
+    container_name: bambuddy
+    ports:
+      - "8000:8000"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - bambuddy_data:/app/data   # 数据卷路径以 Bambuddy 官方文档为准，按需调整
+    # 生产环境（与打印机同局域网）：改用 host 网络模式以支持 SSDP 自动发现 + 摄像头流，
+    # 启用时注释掉上面的 ports 段：
+    # network_mode: host
+
+volumes:
+  mysql_data:
+  minio_data:
+  bambuddy_data:
