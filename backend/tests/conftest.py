@@ -19,10 +19,16 @@ from models import (
     CreditAccountModel,
     CreditTransactionModel,
     PrintOrderModel,
+    OrderFileModel,
     PrintEventModel,
     BambuddyJobModel,
 )
 from services import CreditService
+from services.storage import storage
+from flask_jwt_extended import JWTManager
+from blueprints import (
+    auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp,
+)
 
 
 @pytest.fixture(scope="session")
@@ -30,10 +36,22 @@ def app():
     """session 级 Flask app，建所有表；session 结束 drop。"""
     app = Flask(__name__)
     app.config.from_object(config)
+    app.config["MINIO_BUCKET"] = "bme-3dfarm-test-models"  # 测试用独立 bucket
     db.init_app(app)
+    storage.init_app(app)
+    JWTManager(app)
+    for bp in (auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp):
+        app.register_blueprint(bp)
     with app.app_context():
         db.create_all()
-        yield app
+        try:
+            storage.ensure_bucket()
+        except Exception as exc:  # MinIO 未起时不阻塞测试收集
+            print(f"[conftest] MinIO 不可用，文件相关测试将失败: {exc}")
+    # yield 不在 app_context 内：每个测试/请求自己推 context，避免一个长期
+    # 存活的 session 跨测试污染（test_client 会复用旧 session 的 identity map）。
+    yield app
+    with app.app_context():
         db.session.remove()
         db.drop_all()
 
@@ -47,6 +65,7 @@ def _clean_tables(app):
         db.session.query(BambuddyJobModel).delete()
         db.session.query(CreditTransactionModel).delete()
         db.session.query(CreditAccountModel).delete()
+        db.session.query(OrderFileModel).delete()
         db.session.query(PrintOrderModel).delete()
         db.session.query(UserModel).delete()
         db.session.commit()

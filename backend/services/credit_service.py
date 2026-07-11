@@ -12,6 +12,12 @@
   3. 改余额、写流水（UNIQUE idempotency_key 兜底并发）
   4. commit；IntegrityError → rollback → replay（处理并发同 key 插入）
 
+事务原子性（订单蓝图组合用）：所有写方法接受 _commit=True 默认参数。
+  - _commit=True（默认）：方法自己 commit，独立调用场景（internal/grant、auth）
+  - _commit=False：只锁+改+写流水，不 commit；调用方统一 commit/rollback。
+    用于订单蓝图把 credit 操作与状态转换组合成原子事务。
+    FOR UPDATE 锁持有到调用方 commit/rollback。
+
 业务校验放锁内（compute_delta 回调）是为了规避 TOCTOU：否则锁外检查余额、锁内扣款，
 并发下两个请求都能过检查，导致超扣。
 """
@@ -136,63 +142,71 @@ class CreditService:
         source=None,
         reason=None,
         operator_id=None,
+        _commit=True,
     ):
         """所有写操作的统一骨架。
 
         compute_delta(account) -> (delta_available, delta_frozen)
             在 FOR UPDATE 锁内执行；业务校验（如余额够不够）在此回调内做，
             不通过抛 InsufficientCreditError。骨架负责非负兜底 + 写流水 + 幂等兜底。
+
+        _commit=True（默认）：锁→改→写流水→commit→IntegrityError 兜底 replay。
+        _commit=False：锁→改→写流水后不 commit，FOR UPDATE 锁持有到调用方
+            commit/rollback；用于订单蓝图组合原子事务。
         """
         # 1. 幂等快速路径
         replay = CreditService._replay(idempotency_key)
         if replay:
             return replay
 
-        try:
-            # 2. 锁账户
-            account = CreditService._lock_account(user_id)
-            before_available = account.available_credit
-            before_frozen = account.frozen_credit
+        # 2. 锁账户（_commit=False 时锁持有到调用方 commit）
+        account = CreditService._lock_account(user_id)
+        before_available = account.available_credit
+        before_frozen = account.frozen_credit
 
-            # 3. 锁内业务校验 + 算增量
-            delta_available, delta_frozen = compute_delta(account)
+        # 3. 锁内业务校验 + 算增量
+        delta_available, delta_frozen = compute_delta(account)
 
-            after_available = before_available + delta_available
-            after_frozen = before_frozen + delta_frozen
-            # 非负兜底（compute_delta 通常已校验，这是最后防线）
-            if after_available < 0 or after_frozen < 0:
-                raise InsufficientCreditError(
-                    f"余额不可为负: after_available={after_available}, "
-                    f"after_frozen={after_frozen}"
-                )
-
-            # 4. 改余额 + 写流水
-            account.available_credit = after_available
-            account.frozen_credit = after_frozen
-            txn = CreditTransactionModel(
-                user_id=user_id,
-                order_id=order_id,
-                type=type,
-                amount=amount,
-                before_available=before_available,
-                after_available=after_available,
-                before_frozen=before_frozen,
-                after_frozen=after_frozen,
-                source=source,
-                reason=reason,
-                operator_id=operator_id,
-                idempotency_key=idempotency_key,
+        after_available = before_available + delta_available
+        after_frozen = before_frozen + delta_frozen
+        # 非负兜底（compute_delta 通常已校验，这是最后防线）
+        if after_available < 0 or after_frozen < 0:
+            raise InsufficientCreditError(
+                f"余额不可为负: after_available={after_available}, "
+                f"after_frozen={after_frozen}"
             )
-            db.session.add(txn)
-            db.session.commit()
-            return CreditService._format(txn, replayed=False)
-        except IntegrityError:
-            # 5. 并发：另一个请求先插入了同 idempotency_key → replay
-            db.session.rollback()
-            replay = CreditService._replay(idempotency_key)
-            if replay:
-                return replay
-            raise
+
+        # 4. 改余额 + 写流水
+        account.available_credit = after_available
+        account.frozen_credit = after_frozen
+        txn = CreditTransactionModel(
+            user_id=user_id,
+            order_id=order_id,
+            type=type,
+            amount=amount,
+            before_available=before_available,
+            after_available=after_available,
+            before_frozen=before_frozen,
+            after_frozen=after_frozen,
+            source=source,
+            reason=reason,
+            operator_id=operator_id,
+            idempotency_key=idempotency_key,
+        )
+        db.session.add(txn)
+
+        if _commit:
+            try:
+                db.session.commit()
+            except IntegrityError:
+                # 5. 并发：另一个请求先插入了同 idempotency_key → replay
+                db.session.rollback()
+                replay = CreditService._replay(idempotency_key)
+                if replay:
+                    return replay
+                raise
+        # _commit=False：调用方统一 commit/rollback
+        return CreditService._format(txn, replayed=False)
 
     # ═══════════ 只读 ═══════════
     @staticmethod
@@ -246,7 +260,7 @@ class CreditService:
     # ═══════════ 写操作：发放 / 调整 ═══════════
     @staticmethod
     def grant(user_id, amount, source="admin_grant", reason=None,
-              operator_id=None, idempotency_key=None):
+              operator_id=None, idempotency_key=None, _commit=True):
         """发放 credit（本平台 credit 唯一增加途径）。available += amount。
 
         source: admin_grant / activity / training_camp / system。
@@ -269,10 +283,12 @@ class CreditService:
             source=source,
             reason=reason,
             operator_id=operator_id,
+            _commit=_commit,
         )
 
     @staticmethod
-    def adjust(user_id, amount, reason, operator_id, idempotency_key=None):
+    def adjust(user_id, amount, reason, operator_id,
+               idempotency_key=None, _commit=True):
         """管理员手动调整（可加可减）。available += amount。
 
         amount < 0 时为扣减，扣到余额不足抛 InsufficientCreditError。
@@ -302,11 +318,12 @@ class CreditService:
             source="admin_adjust",
             reason=reason,
             operator_id=operator_id,
+            _commit=_commit,
         )
 
     # ═══════════ 写操作：订单生命周期 ═══════════
     @staticmethod
-    def freeze(user_id, order_id, amount, quote_version):
+    def freeze(user_id, order_id, amount, quote_version, _commit=True):
         """下单冻结。available -= amount, frozen += amount。可用不足抛错。
 
         幂等键: freeze:{order_id}:{quote_version}（同订单同报价版本重复冻结只生效一次）。
@@ -332,11 +349,12 @@ class CreditService:
             compute_delta=_delta,
             order_id=order_id,
             reason=f"下单冻结 order={order_id} v{quote_version}",
+            _commit=_commit,
         )
 
     @staticmethod
     def capture(user_id, order_id, frozen_amount, actual_credit=None,
-                print_job_id=None):
+                print_job_id=None, _commit=True):
         """完成实扣。frozen -= frozen_amount，按 actual_credit 多退少补。
 
         - actual_credit=None：按冻结额实扣（settle=frozen_amount），无差价。
@@ -391,10 +409,11 @@ class CreditService:
             compute_delta=_delta,
             order_id=order_id,
             reason=f"完成实扣 order={order_id} settle={settle}",
+            _commit=_commit,
         )
 
     @staticmethod
-    def release(user_id, order_id, amount, reason=None, version=1):
+    def release(user_id, order_id, amount, reason=None, version=1, _commit=True):
         """失败/取消释放冻结。frozen -= amount, available += amount。
 
         幂等键: release:{order_id}:{version}。
@@ -420,10 +439,11 @@ class CreditService:
             compute_delta=_delta,
             order_id=order_id,
             reason=reason or f"释放冻结 order={order_id} v{version}",
+            _commit=_commit,
         )
 
     @staticmethod
-    def refund(user_id, order_id, amount, reason_code, version=1):
+    def refund(user_id, order_id, amount, reason_code, version=1, _commit=True):
         """退款（实扣退回账户）。available += amount。
 
         幂等键: refund:{order_id}:{reason_code}:{version}。
@@ -443,4 +463,5 @@ class CreditService:
             compute_delta=lambda acc: (amt, CreditService.ZERO),
             order_id=order_id,
             reason=reason_code,
+            _commit=_commit,
         )

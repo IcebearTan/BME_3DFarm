@@ -6,6 +6,7 @@ from flask import Flask, jsonify
 
 import config
 from exts import db, mail, limiter, redis_client
+from services.storage import storage
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
@@ -28,6 +29,7 @@ db.init_app(app)
 mail.init_app(app)
 limiter.init_app(app)
 redis_client.init_app(app)
+storage.init_app(app)
 migrate = Migrate(app, db)
 jwt = JWTManager(app)
 

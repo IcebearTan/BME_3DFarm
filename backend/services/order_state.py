@@ -47,7 +47,7 @@ class OrderStateMachine:
         S.STATUS_APPROVED:         {S.STATUS_READY_TO_PRINT, S.STATUS_CANCELLED},
         S.STATUS_READY_TO_PRINT:   {S.STATUS_PRINTING, S.STATUS_CANCELLED},
         S.STATUS_PRINTING:         {S.STATUS_PRINT_COMPLETED, S.STATUS_PRINT_FAILED},
-        S.STATUS_PRINT_COMPLETED:  {S.STATUS_QC_PENDING},
+        S.STATUS_PRINT_COMPLETED:  {S.STATUS_QC_PENDING, S.STATUS_REFUNDED},
         S.STATUS_QC_PENDING:       {S.STATUS_CLOSED, S.STATUS_REFUNDED},
         S.STATUS_PRINT_FAILED:     {S.STATUS_NEED_REVIEW},
         S.STATUS_NEED_REVIEW:      {S.STATUS_READY_TO_PRINT,  # 重打
@@ -109,7 +109,8 @@ class OrderStateMachine:
 
     # ── 写操作 ──
     @staticmethod
-    def transition(order, to_status, actor_id=None, note=None, source=None):
+    def transition(order, to_status, actor_id=None, note=None, source=None,
+                   _commit=True):
         """校验并执行状态转换。
 
         - 同状态无操作（幂等直接返回）
@@ -145,5 +146,7 @@ class OrderStateMachine:
             },
             idempotency_key=f"status_change:{order.id}:{uuid.uuid4().hex}",
         ))
-        db.session.commit()
+        if _commit:
+            db.session.commit()
+        # _commit=False: 调用方统一 commit/rollback（订单蓝图组合事务）
         return order
