@@ -64,7 +64,7 @@ async function submit() {
         >
           <ShieldCheck class="w-6 h-6" />
         </div>
-        <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">管理后台</h1>
+        <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">BME 3DFarm 管理后台</h1>
         <p class="text-sm text-zinc-400 mt-1">仅管理员可登录</p>
       </div>
 

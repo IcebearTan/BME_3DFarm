@@ -73,7 +73,7 @@ function switchMode(m) {
         >
           <Boxes class="w-6 h-6" />
         </div>
-        <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">3D 打印农场</h1>
+        <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">BME 3DFarm</h1>
         <p class="text-sm text-zinc-400 mt-1">用 credit 下单，打印你的模型</p>
       </div>
 
