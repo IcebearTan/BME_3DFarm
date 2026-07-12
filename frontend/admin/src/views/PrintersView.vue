@@ -69,17 +69,9 @@ const statusLabel = {
             <p class="text-xs text-zinc-400">队列</p>
             <p class="text-zinc-700 dark:text-zinc-300">{{ p.queue_count }}</p>
           </div>
-          <div v-if="p.status_detail?.mc_percent != null">
-            <p class="text-xs text-zinc-400">进度</p>
-            <p class="text-zinc-700 dark:text-zinc-300">{{ p.status_detail.mc_percent }}%</p>
-          </div>
-          <div v-if="p.status_detail?.nozzle_temp">
-            <p class="text-xs text-zinc-400">喷头</p>
-            <p class="text-zinc-700 dark:text-zinc-300">{{ p.status_detail.nozzle_temp }}</p>
-          </div>
-          <div v-if="p.status_detail?.bed_temp">
-            <p class="text-xs text-zinc-400">热床</p>
-            <p class="text-zinc-700 dark:text-zinc-300">{{ p.status_detail.bed_temp }}</p>
+          <div v-for="(v, k) in (p.status_detail || {})" :key="k">
+            <p class="text-xs text-zinc-400">{{ k }}</p>
+            <p class="text-zinc-700 dark:text-zinc-300">{{ v }}</p>
           </div>
         </div>
 
