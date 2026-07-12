@@ -9,9 +9,14 @@
   refund   →REFUNDED + refund（实扣退回）
   cancel   →CANCELLED + release（未打印释放）
 """
+import hashlib
+import io
+import os
+import tempfile
+import uuid
 from decimal import Decimal, InvalidOperation
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required
 
 from exts import db
@@ -27,6 +32,9 @@ from services import (
     InvalidAmountError,
     AccountNotFoundError,
 )
+from services.storage import storage
+from services.gcode_parser import parse_gcode_3mf
+from services.pricing import PricingService
 from . import require_admin, _current_user
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -539,6 +547,109 @@ def cancel_dispatch(order_id):
         return jsonify({"code": 502, "message": f"Bambuddy 取消失败: {e}"}), 502
     code = 200 if result.get("status") == "cancelled" else 409
     return jsonify({"code": code, "data": result, "message": result.get("status")}), code
+
+
+# ─────────── 文件下载 + 切片产物上传（Phase 4 路径 B） ───────────
+@bp.route("/orders/<int:order_id>/files/<int:file_id>/download", methods=["GET"])
+@jwt_required()
+@require_admin
+def download_order_file(order_id, file_id):
+    """下载订单文件（管理员拉 .3mf 去本地 Bambu Studio 切片）。"""
+    f = db.session.get(OrderFileModel, file_id)
+    if not f or f.order_id != order_id:
+        return jsonify({"code": 404, "message": "文件不存在"}), 404
+    resp = storage.get_object(f.storage_key)
+    try:
+        data = resp.read()
+    finally:
+        resp.close()
+    return Response(
+        data,
+        mimetype=f.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{f.original_filename}"'},
+    )
+
+
+@bp.route("/orders/<int:order_id>/upload-sliced", methods=["POST"])
+@jwt_required()
+@require_admin
+def upload_sliced(order_id):
+    """管理员上传切片产物 .gcode.3mf → 解析 gcode + 自动报价（复用 Phase 1.5）。
+
+    订单在 QUOTING：报价成功后转 WAITING_CONFIRM。
+    """
+    admin = _current_user()
+    order = _get_order(order_id)
+    if not order:
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"code": 400, "message": "file 必填"}), 400
+    if not file.filename.lower().endswith(".gcode.3mf"):
+        return jsonify({"code": 400, "message": "仅支持 .gcode.3mf（已切片）"}), 400
+
+    file_bytes = file.read()
+    size = len(file_bytes)
+    sha = hashlib.sha256(file_bytes).hexdigest()
+    key = f"orders/{order_id}/{uuid.uuid4().hex}.gcode.3mf"
+    storage.put_object(
+        key, io.BytesIO(file_bytes), size,
+        content_type=file.content_type or "application/octet-stream",
+    )
+    db.session.add(OrderFileModel(
+        order_id=order_id, file_type=OrderFileModel.FILE_SLICED,
+        original_filename=file.filename, storage_key=key,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=size, sha256=sha,
+    ))
+
+    # 解析 gcode + 自动报价
+    parsed = None
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        parsed = parse_gcode_3mf(tmp_path)
+    except Exception:
+        parsed = None
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    estimated = None
+    if parsed and (parsed.get("filament_used_g") or parsed.get("print_time_s")):
+        estimated = PricingService.calc(
+            parsed.get("filament_used_g") or 0,
+            parsed.get("print_time_s") or 0,
+            order.material,
+        )
+        order.estimated_credit = estimated
+        order.estimate_weight_g = parsed.get("filament_used_g")
+        order.estimate_print_seconds = (
+            int(parsed["print_time_s"]) if parsed.get("print_time_s") else None
+        )
+        if order.status == PrintOrderModel.STATUS_QUOTING:
+            OrderStateMachine.transition(
+                order, PrintOrderModel.STATUS_WAITING_CONFIRM,
+                actor_id=admin.id, note=f"切片产物上传，自动报价 {estimated}", _commit=False,
+            )
+    db.session.commit()
+
+    return jsonify({
+        "code": 200,
+        "message": (
+            f"已上传并自动报价 {estimated} credit" if estimated
+            else "已上传（未能解析 gcode，需手动报价）"
+        ),
+        "data": {
+            "estimated_credit": str(estimated) if estimated else None,
+            "order_status": order.status,
+        },
+    })
 
 
 # ─────────── 打印机（Phase 2） ───────────

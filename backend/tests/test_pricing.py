@@ -212,3 +212,29 @@ def test_admin_pricing_crud(app):
     with app.app_context():
         # calc(100g NYLON) 现在 0.9：2 + 90 + 10 = 102
         assert PricingService.calc(100, 3600, "NYLON") == Decimal("102.00")
+
+
+# ═══════════════════════════ admin 上传切片产物（Phase 4 路径 B） ═══════════════════════════
+def test_admin_upload_sliced_auto_quote(app):
+    """admin 上传 .gcode.3mf 切片产物 → 解析 + 自动报价 + QUOTING→WAITING_CONFIRM。"""
+    client = app.test_client()
+    cuid, ctoken = _register(client, app, "slicecust@x.com")
+    _, atoken = _register(client, app, "sliceadmin@x.com", role="admin")
+    # 客户建 .3mf 订单（无文件，QUOTING）
+    oid = client.post("/orders/", headers=_h(ctoken), data={"material": "PLA"}).get_json()["data"]["id"]
+
+    # admin upload-sliced（40g/3600s → calc=2+20+10=32）
+    r = client.post(
+        f"/admin/orders/{oid}/upload-sliced", headers=_h(atoken),
+        data={"file": (_gcode_3mf_buf(filament_g=40, time_s=3600), "sliced.gcode.3mf")},
+        content_type="multipart/form-data",
+    )
+    assert r.get_json()["code"] == 200, r.get_json()
+    data = r.get_json()["data"]
+    assert data["estimated_credit"] == "32.00"
+    assert data["order_status"] == "WAITING_CONFIRM"
+
+    # 订单查回确认
+    detail = client.get(f"/orders/{oid}", headers=_h(ctoken)).get_json()["data"]
+    assert detail["status"] == "WAITING_CONFIRM"
+    assert detail["estimated_credit"] == "32.00"

@@ -134,6 +134,50 @@ async function doDispatch() {
   }
 }
 
+// 文件下载 + 切片产物上传（Phase 4 路径 B）
+const slicedFile = ref(null)
+const uploading = ref(false)
+async function downloadFile(fileId, name) {
+  try {
+    const blob = await adminApi.downloadOrderFile(detail.value.id, fileId)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    toast.error('下载失败')
+  }
+}
+function onPickSliced(e) {
+  slicedFile.value = e.target.files?.[0] || null
+}
+async function doUploadSliced() {
+  if (!slicedFile.value) {
+    toast.error('请先选择 .gcode.3mf')
+    return
+  }
+  uploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', slicedFile.value)
+    const res = await adminApi.uploadSliced(detail.value.id, fd)
+    if (res.code === 200) {
+      toast.success(res.message)
+      slicedFile.value = null
+      await load()
+      await refreshDetail()
+    } else {
+      toast.error(res.message || '上传失败')
+    }
+  } catch (e) {
+    toast.error(e.response?.data?.message || '上传失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
 async function simpleAction(o, label, fn) {
   acting.value = true
   try {
@@ -369,7 +413,19 @@ onMounted(load)
                 </div>
                 <div v-if="detail.files?.length" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
                   <span class="text-zinc-400">文件</span>
-                  <p class="mt-1 font-mono text-xs break-all">{{ detail.files[0].original_filename }}</p>
+                  <div v-for="f in detail.files" :key="f.id" class="mt-1 flex items-center justify-between gap-2">
+                    <p class="font-mono text-xs break-all">{{ f.original_filename }}（{{ f.file_type }}）</p>
+                    <button @click="downloadFile(f.id, f.original_filename)" class="text-xs text-indigo-600 hover:underline shrink-0">下载</button>
+                  </div>
+                </div>
+                <!-- 上传切片产物（Phase 4 路径 B）-->
+                <div v-if="detail.status === 'QUOTING'" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  <span class="text-zinc-400">上传切片产物</span>
+                  <p class="mt-1 text-xs text-zinc-400">本地 Bambu Studio 切片后上传 .gcode.3mf，系统自动报价</p>
+                  <div class="mt-2 flex gap-2 items-center">
+                    <input type="file" accept=".gcode.3mf" @change="onPickSliced" class="text-xs flex-1" />
+                    <AppButton size="xs" :loading="uploading" :disabled="!slicedFile" @click="doUploadSliced">上传+报价</AppButton>
+                  </div>
                 </div>
                 <!-- Bambuddy 任务绑定（Phase 2）-->
                 <div class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
