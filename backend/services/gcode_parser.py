@@ -1,9 +1,11 @@
 """解析 .gcode.3mf 提取耗材克重 + 打印时间（Phase 1.5 自动报价输入）。
 
-.gcode.3mf 是 zip。两条解析路径：
-  1. Metadata/slice_info.config（XML）—— 结构化、优先
-  2. zip 内 gcode entry 头部注释（; used_filament / ; total_time）—— 兜底
-返回 {filament_used_g, print_time_s}；解析不到返回 None（不阻塞下单，订单走管理员手填）。
+.gcode.3mf 是 zip。两条解析路径，兼容 BambuStudio 真实导出格式：
+  1. Metadata/slice_info.config（XML）—— BambuStudio 用 <metadata key="weight" value=".."/>
+     和 <metadata key="prediction" value="秒"/>；<filament used_g=".."/>；兼容 <weight>X</weight> 标签
+  2. zip 内 gcode entry 头部注释 —— ; total filament weight [g] : X / ; total estimated time: Xh Ym Zs
+     兼容 ; used_filament = Xg / ; total_time = X
+返回 {filament_used_g, print_time_s}；解析不到返回 None（订单走管理员手填）。
 """
 import re
 import zipfile
@@ -20,42 +22,41 @@ def _try_float(s):
 
 
 def _parse_slice_info_xml(xml_bytes):
-    """解析 slice_info.config XML，提取耗材克重(g) + 时间(s)。
+    """解析 slice_info.config XML。
 
-    Bambu slice_info.config 结构随版本略异，用宽松搜索（去命名空间 + 多字段名兜底）。
+    BambuStudio 真实格式：<metadata key="weight" value="36.56"/> + <metadata key="prediction" value="8657"/>（秒）
+    兼容标签文本：<weight>36.56</weight> / <filament used_g=".."/>
     """
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError:
         return None
 
-    texts = {}
+    kv = {}  # <metadata key value> 对
+    tag_texts = {}  # 标签文本（兼容 <weight>X</weight>）
     for el in root.iter():
         tag = el.tag.split("}")[-1].lower()
         if el.text and el.text.strip():
-            texts.setdefault(tag, []).append(el.text.strip())
-        for k, v in el.attrib.items():
-            texts.setdefault(f"@{k.split('}')[-1].lower()}", []).append(v)
+            tag_texts.setdefault(tag, []).append(el.text.strip())
+        if tag == "metadata" and "key" in el.attrib and "value" in el.attrib:
+            kv[el.attrib["key"].lower()] = el.attrib["value"]
+        if tag == "filament":
+            for attr in ("used_g", "used_m", "weight"):
+                if attr in el.attrib:
+                    kv.setdefault(f"filament_{attr}", el.attrib[attr])
 
-    weight = None
-    for key in ("weight", "used_filament", "filament_used", "filamentweight"):
-        for v in texts.get(key, []):
-            f = _try_float(v)
-            if f is not None:
-                weight = f
-                break
-        if weight is not None:
-            break
+    def first(*keys):
+        for k in keys:
+            if k in kv:
+                return kv[k]
+            if k in tag_texts:
+                return tag_texts[k][0]
+        return None
 
-    time_s = None
-    for key in ("time", "total_time", "estimated_print_time", "totaltime"):
-        for v in texts.get(key, []):
-            f = _try_float(v)
-            if f is not None:
-                time_s = f
-                break
-        if time_s is not None:
-            break
+    weight = _try_float(first("weight", "used_filament", "filament_used",
+                              "filament_weight", "filament_used_g"))
+    time_s = _try_float(first("prediction", "total_time", "time",
+                              "estimated_print_time", "totaltime"))
 
     if weight is None and time_s is None:
         return None
@@ -63,16 +64,22 @@ def _parse_slice_info_xml(xml_bytes):
 
 
 def _parse_gcode_comments(gcode_text):
-    """从 gcode 头部注释提取耗材/时间。BambuStudio 格式示例：
-       ; used_filament = 123.45g   ; total_time = 12.3
-       ; filament used[g] = 123.45  ; estimated printing time = 1h 30m 20s
+    """从 gcode 头部注释提取耗材/时间。
+
+    BambuStudio：; total filament weight [g] : 36.56 / ; total estimated time: 2h 24m 17s
+    兼容：; used_filament = 36.56g / ; total_time = 1800 / ; estimated printing time = 1h 30m 20s
     """
     head = gcode_text[:8192]
 
     weight = None
-    m = re.search(r";\s*(?:used_filament|filament\s*used)\s*[=:]\s*(\d+\.?\d*)\s*g?", head, re.I)
-    if m:
-        weight = _try_float(m.group(1))
+    for pat in (
+        r";\s*total\s+filament\s+weight\s*\[g\]\s*[:=]\s*(\d+\.?\d*)",
+        r";\s*(?:used_filament|filament\s*used)\s*[=:]\s*(\d+\.?\d*)\s*g?",
+    ):
+        m = re.search(pat, head, re.I)
+        if m:
+            weight = _try_float(m.group(1))
+            break
 
     time_s = None
     m = re.search(r";\s*total_time\s*[=:]\s*(\d+\.?\d*)", head, re.I)
@@ -80,7 +87,8 @@ def _parse_gcode_comments(gcode_text):
         time_s = _try_float(m.group(1))
     else:
         m = re.search(
-            r";\s*estimated\s*(?:printing\s*)?time[^\d]*(\d+)\s*h\s*(\d+)\s*m\s*(\d+)\s*s",
+            r";\s*(?:total\s+estimated\s+time|model\s+printing\s+time|"
+            r"estimated\s+printing\s+time)[^\d]*(\d+)\s*h\s*(\d+)\s*m\s*(\d+)\s*s",
             head, re.I,
         )
         if m:
@@ -99,8 +107,7 @@ def parse_gcode_3mf(path):
 
             # 1. 优先 slice_info.config XML
             for name in names:
-                low = name.lower()
-                if low.endswith("slice_info.config"):
+                if name.lower().endswith("slice_info.config"):
                     try:
                         res = _parse_slice_info_xml(zf.read(name))
                         if res:
@@ -108,10 +115,9 @@ def parse_gcode_3mf(path):
                     except Exception:
                         pass
 
-            # 2. 兜底：找 gcode entry 读头部注释
+            # 2. 兜底：找 .gcode entry 读头部注释
             for name in names:
-                low = name.lower()
-                if low.endswith(".gcode") or low.endswith(".gcode.3mf"):
+                if name.lower().endswith(".gcode"):
                     try:
                         text = zf.read(name).decode("utf-8", errors="ignore")
                         res = _parse_gcode_comments(text)
