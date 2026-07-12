@@ -33,8 +33,9 @@ from services import (
     AccountNotFoundError,
 )
 from services.storage import storage
-from services.gcode_parser import parse_gcode_3mf
-from services.pricing import PricingService
+from services.gcode_parser import parse_gcode_3mf, main_material, extract_ams_expectation
+from services.pricing import PricingService, quote_to_jsonable
+from services.ams_matcher import match_ams
 from . import require_admin, _current_user
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -60,6 +61,9 @@ def _admin_order_to_dict(order):
         "estimated_credit": str(order.estimated_credit) if order.estimated_credit is not None else None,
         "frozen_credit": str(order.frozen_credit),
         "actual_credit": str(order.actual_credit) if order.actual_credit is not None else None,
+        "is_manual_slice_path": bool(order.is_manual_slice_path),
+        "parsed_filaments": order.parsed_filaments,
+        "parsed_nozzles": order.parsed_nozzles,
         "priority": order.priority,
         "due_at": order.due_at.isoformat() if order.due_at else None,
         "customer_note": order.customer_note,
@@ -444,6 +448,7 @@ def _job_to_dict(job):
         "bambuddy_archive_id": job.bambuddy_archive_id,
         "filename": job.filename, "job_token": job.job_token,
         "bambuddy_status": job.bambuddy_status,
+        "ams_mapping": job.ams_mapping,
         "mapping_confidence": job.mapping_confidence,
         "dispatched_at": job.dispatched_at.isoformat() if job.dispatched_at else None,
         "started_at": job.started_at.isoformat() if job.started_at else None,
@@ -497,15 +502,93 @@ def bind_bambuddy(order_id):
     return jsonify({"code": 200, "message": "已绑定", "data": _job_to_dict(job)})
 
 
-# ─────────── 下发 Bambuddy（Phase 3 半自动调度） ───────────
+# ─────────── 下发 Bambuddy（Phase 4：打印机下拉 + AMS 校验 + ams_mapping） ───────────
+def _order_ams_expectation(order):
+    """取订单 gcode 期望料盘（dispatch/preview 用）。
+
+    parsed_filaments 优先；无则拉 MinIO 的 .gcode.3mf 重解析兜底（回归旧订单）。
+    返回 extract_ams_expectation 输出；解析不到返回 []（AMS 校验降级）。
+    """
+    if order.parsed_filaments:
+        return extract_ams_expectation({
+            "filaments": order.parsed_filaments,
+            "nozzles": order.parsed_nozzles or [],
+        })
+    f = OrderFileModel.query.filter_by(
+        order_id=order.id, file_type=OrderFileModel.FILE_SLICED
+    ).first()
+    if not f:
+        return []
+    tmp_path = None
+    try:
+        resp = storage.get_object(f.storage_key)
+        try:
+            data = resp.read()
+        finally:
+            resp.close()
+        with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        parsed = parse_gcode_3mf(tmp_path)
+        return extract_ams_expectation(parsed) if parsed else []
+    except Exception:
+        return []
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def _printer_ams_status(printer):
+    """从 PrinterModel.status_detail 取 ams 字段（防御性）。"""
+    detail = printer.status_detail if isinstance(printer.status_detail, dict) else None
+    return (detail or {}).get("ams") if detail else None
+
+
+@bp.route("/orders/<int:order_id>/dispatch/preview", methods=["POST"])
+@jwt_required()
+@require_admin
+def dispatch_preview(order_id):
+    """预览下发：AMS 期望 vs 实际对比。纯查询不写入。
+
+    body: {bambuddy_printer_id} → {printer, expected_filaments, match_result}
+    读 order.parsed_filaments（无则拉 MinIO 重解析兜底）+ printer.status_detail.ams → match_ams。
+    """
+    order = _get_order(order_id)
+    if not order:
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    printer_id = data.get("bambuddy_printer_id")
+    if printer_id is None:
+        return jsonify({"code": 400, "message": "bambuddy_printer_id 必填"}), 400
+    printer = PrinterModel.query.filter_by(bambuddy_printer_id=printer_id).first()
+    if not printer:
+        return jsonify({"code": 404, "message": "打印机不存在"}), 404
+
+    expectation = _order_ams_expectation(order)
+    match_result = match_ams(expectation, _printer_ams_status(printer))
+    return jsonify({"code": 200, "data": {
+        "printer": {
+            "id": printer.id, "public_name": printer.public_name,
+            "bambuddy_printer_id": printer.bambuddy_printer_id,
+            "has_ams": printer.has_ams,
+        },
+        "expected_filaments": expectation,
+        "match_result": match_result,
+    }})
+
+
 @bp.route("/orders/<int:order_id>/dispatch", methods=["POST"])
 @jwt_required()
 @require_admin
 def dispatch_order(order_id):
-    """下发 Bambuddy 打印。body: {bambuddy_printer_id}。
+    """下发 Bambuddy 打印。body: {bambuddy_printer_id, ams_mapping?}。
 
-    订单须 READY_TO_PRINT + 有 .gcode.3mf 文件。同步调 _do_dispatch（开发期），
-    生产可改 dispatch_order.apply_async 异步。
+    ams_mapping 传了 → 透传（admin 已在 preview 手选替代料盘，跳过校验）；
+    没传 → 调 match_ams：matched=True 用其 ams_mapping；matched=False（有期望但料盘不符）
+    返回 409 + match_result 提示 admin 手选；无期望（gcode 无 filament 信息）→ 无法校验，直接下发。
     """
     order = _get_order(order_id)
     if not order:
@@ -516,16 +599,34 @@ def dispatch_order(order_id):
     printer_id = data.get("bambuddy_printer_id")
     if printer_id is None:
         return jsonify({"code": 400, "message": "bambuddy_printer_id 必填"}), 400
+    ams_mapping = data.get("ams_mapping")  # admin 手选则透传
+
     sliced = OrderFileModel.query.filter_by(
         order_id=order_id, file_type=OrderFileModel.FILE_SLICED
     ).first()
     if not sliced:
         return jsonify({"code": 409, "message": "订单无 .gcode.3mf 文件，无法自动下发"}), 409
 
+    # 没传 ams_mapping → 自动校验
+    final_ams_mapping = ams_mapping
+    if ams_mapping is None:
+        expectation = _order_ams_expectation(order)
+        if expectation:  # 有期望才校验；无期望（gcode 无 filament）→ 无法校验，直接下发
+            printer = PrinterModel.query.filter_by(bambuddy_printer_id=printer_id).first()
+            match_result = match_ams(expectation, _printer_ams_status(printer))
+            if match_result.get("matched"):
+                final_ams_mapping = match_result.get("ams_mapping")
+            else:
+                return jsonify({
+                    "code": 409,
+                    "message": "AMS 料盘不匹配，请在预览中手选替代料盘",
+                    "data": {"match_result": match_result},
+                }), 409
+
     from bambuddy_adapter import BambuddyError
     from tasks.dispatch import _do_dispatch
     try:
-        result = _do_dispatch(order_id, printer_id)
+        result = _do_dispatch(order_id, printer_id, ams_mapping=final_ams_mapping)
     except BambuddyError as e:
         return jsonify({"code": 502, "message": f"Bambuddy 下发失败: {e}"}), 502
     code = 200 if result.get("status") == "dispatched" else 409
@@ -574,9 +675,10 @@ def download_order_file(order_id, file_id):
 @jwt_required()
 @require_admin
 def upload_sliced(order_id):
-    """管理员上传切片产物 .gcode.3mf → 解析 gcode + 自动报价（复用 Phase 1.5）。
+    """管理员上传切片产物 .gcode.3mf → 解析 gcode + 自动报价（含手工费）。
 
-    订单在 QUOTING：报价成功后转 WAITING_CONFIRM。
+    用扩展 parser 解析多色 filament/nozzle 存 order；material 从 gcode 推导；
+    calc(surcharge=True)（.3mf 路径加手工费）。订单在 QUOTING：报价成功后转 WAITING_CONFIRM。
     """
     admin = _current_user()
     order = _get_order(order_id)
@@ -621,16 +723,26 @@ def upload_sliced(order_id):
                 pass
 
     estimated = None
+    quote = None
     if parsed and (parsed.get("filament_used_g") or parsed.get("print_time_s")):
+        # material 从 gcode 推导（gcode 是唯一真相）；存 parsed_filaments/nozzles 供下发 AMS 校验
+        material = main_material(parsed) or order.material
+        order.material = material
+        order.parsed_filaments = parsed.get("filaments") or None
+        order.parsed_nozzles = parsed.get("nozzles") or None
+        estimate_weight = parsed.get("filament_used_g")
+        estimate_seconds = parsed.get("print_time_s")
+        # .3mf 路径走 admin 手动切片 → 加手工费（surcharge=True）
         estimated = PricingService.calc(
-            parsed.get("filament_used_g") or 0,
-            parsed.get("print_time_s") or 0,
-            order.material,
+            estimate_weight or 0, estimate_seconds or 0, material, surcharge=True,
+        )
+        quote = PricingService.describe(
+            estimate_weight or 0, estimate_seconds or 0, material, surcharge=True,
         )
         order.estimated_credit = estimated
-        order.estimate_weight_g = parsed.get("filament_used_g")
+        order.estimate_weight_g = estimate_weight
         order.estimate_print_seconds = (
-            int(parsed["print_time_s"]) if parsed.get("print_time_s") else None
+            int(estimate_seconds) if estimate_seconds else None
         )
         if order.status == PrintOrderModel.STATUS_QUOTING:
             OrderStateMachine.transition(
@@ -648,6 +760,8 @@ def upload_sliced(order_id):
         "data": {
             "estimated_credit": str(estimated) if estimated else None,
             "order_status": order.status,
+            "material": order.material,
+            "quote": quote_to_jsonable(quote),
         },
     })
 

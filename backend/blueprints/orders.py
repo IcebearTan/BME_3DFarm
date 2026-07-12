@@ -22,8 +22,8 @@ from services import (
     InvalidTransitionError,
 )
 from services.storage import storage
-from services.gcode_parser import parse_gcode_3mf
-from services.pricing import PricingService
+from services.gcode_parser import parse_gcode_3mf, main_material
+from services.pricing import PricingService, quote_to_jsonable
 from . import _current_user
 
 bp = Blueprint("orders", __name__, url_prefix="/orders")
@@ -48,6 +48,8 @@ def _order_to_dict(order):
         "frozen_credit": str(order.frozen_credit),
         "customer_note": order.customer_note,
         "public_progress": order.public_progress,
+        "is_manual_slice_path": bool(order.is_manual_slice_path),
+        "parsed_filaments": order.parsed_filaments,
         "created_at": order.created_at.isoformat() if order.created_at else None,
         "files": [
             {
@@ -73,19 +75,21 @@ def _owned_order_or_404(order_id, user_id):
 @bp.route("/", methods=["POST"])
 @jwt_required()
 def create_order():
-    """创建订单（status=QUOTING，等管理员报价）。multipart：表单参数 + 可选 file。
+    """创建订单。multipart：表单参数 + 可选 file。
 
-    表单：material(必填)/color/quantity/layer_height/nozzle_size/customer_note
+    gcode 是唯一真相：material 不再手填。
+      .gcode.3mf → 解析取主材料 → 自动报价 → WAITING_CONFIRM（存 parsed_filaments/nozzles）
+      .3mf       → 不解析 → QUOTING + is_manual_slice_path=True（等 admin 切片）
+      解析失败   → 降级 QUOTING（人工报价），不阻塞下单
+    表单：quantity/customer_note（color/layer_height/nozzle_size 可选，保留兼容）
     文件：file（.3mf 或 .gcode.3mf，<=200MB，可选）
     """
     user = _current_user()
     if not user:
         return jsonify({"code": 404, "message": "用户不存在"}), 404
 
-    material = request.form.get("material")
-    if not material:
-        return jsonify({"code": 400, "message": "material 必填"}), 400
-
+    # gcode 是唯一真相：material 不再必填，由 .gcode.3mf 解析推导（.3mf 路径留空等切片）
+    form_material = request.form.get("material")
     color = request.form.get("color")
     quantity = request.form.get("quantity", 1, type=int) or 1
     layer_height = request.form.get("layer_height", type=float)
@@ -123,19 +127,31 @@ def create_order():
             "is_sliced": filename.endswith(".gcode.3mf"),
         }
 
-    # .gcode.3mf 自动报价：解析 gcode 拿克重/时长 → PricingService 算 credit
+    # 分支：.gcode.3mf 自动报价（gcode 推主材料）；.3mf 手动切片路径（无报价）
     estimated_credit = None
     estimate_weight = None
     estimate_seconds = None
+    parsed_filaments = None
+    parsed_nozzles = None
+    material = form_material  # 默认兜底；.gcode.3mf 路径会被主材料覆盖
+    is_manual_slice_path = False
+
     if file_meta and file_meta.get("is_sliced"):
         parsed = parse_gcode_3mf(file_meta["tmp_path"])
         if parsed:
+            parsed_filaments = parsed.get("filaments") or None
+            parsed_nozzles = parsed.get("nozzles") or None
             estimate_weight = parsed.get("filament_used_g")
             estimate_seconds = parsed.get("print_time_s")
+            material = main_material(parsed) or form_material
             if estimate_weight is not None or estimate_seconds is not None:
                 estimated_credit = PricingService.calc(
-                    estimate_weight or 0, estimate_seconds or 0, material
+                    estimate_weight or 0, estimate_seconds or 0, material, surcharge=False,
                 )
+        # 解析失败：material 维持 form_material，降级 QUOTING（人工报价），不阻塞下单
+    elif file_meta and not file_meta.get("is_sliced"):
+        # .3mf 模型 → admin 手动切片路径
+        is_manual_slice_path = True
 
     # 建 order（commit 拿 id，用于 storage key）
     order_no = f"PO{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
@@ -152,6 +168,9 @@ def create_order():
         estimated_credit=estimated_credit,
         estimate_weight_g=estimate_weight,
         estimate_print_seconds=int(estimate_seconds) if estimate_seconds is not None else None,
+        parsed_filaments=parsed_filaments,
+        parsed_nozzles=parsed_nozzles,
+        is_manual_slice_path=is_manual_slice_path,
     )
     db.session.add(order)
     db.session.commit()
@@ -182,11 +201,91 @@ def create_order():
                 except OSError:
                     pass
 
-    msg = (f"订单已创建，自动报价 {estimated_credit} credit，待确认"
-           if estimated_credit is not None
-           else "订单已创建，等待管理员报价")
+    if estimated_credit is not None:
+        msg = f"订单已创建，自动报价 {estimated_credit} credit，待确认"
+    elif is_manual_slice_path:
+        msg = "订单已创建，需管理员切片后报价"
+    else:
+        msg = "订单已创建，等待管理员报价"
     return jsonify({"code": 200, "message": msg,
                     "data": _order_to_dict(order)}), 200
+
+
+def _stream_to_temp(file, max_bytes):
+    """流式把 file 落临时文件 + 算 sha256/size。超限返回 (None, None, None, None, error_response)。
+
+    返回 (tmp_path, sha256, size, content_type, None) 或 (None, None, None, None, (resp, code))。
+    preview/create 共用：避免一次性 read() 撑爆内存。
+    """
+    h = hashlib.sha256()
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_path = tmp.name
+        size = 0
+        while True:
+            chunk = file.stream.read(8192)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                os.unlink(tmp_path)
+                return None, None, None, None, (
+                    jsonify({"code": 413,
+                             "message": f"文件过大（上限 {max_bytes // 1024 // 1024}MB）"}),
+                    413,
+                )
+            h.update(chunk)
+            tmp.write(chunk)
+    return tmp_path, h.hexdigest(), size, file.content_type or "application/octet-stream", None
+
+
+@bp.route("/preview", methods=["POST"])
+@jwt_required()
+def preview_order():
+    """预览 .gcode.3mf：解析返回材料/多色/克重/时长/报价，不落库不冻 credit，临时文件即删。
+
+    返回 {filaments, nozzles, plate_index, material, filament_used_g, print_time_s, quote}。
+    解析失败 → 422（提示用户检查文件）。
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({"code": 404, "message": "用户不存在"}), 404
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"code": 400, "message": "file 必填"}), 400
+    if not file.filename.lower().endswith(".gcode.3mf"):
+        return jsonify({"code": 400, "message": "预览仅支持 .gcode.3mf（已切片）"}), 400
+
+    tmp_path, _, _, _, err = _stream_to_temp(file, MAX_FILE_BYTES)
+    if err:
+        return err
+    try:
+        parsed = parse_gcode_3mf(tmp_path)
+        if not parsed:
+            return jsonify({
+                "code": 422,
+                "message": "无法解析 gcode（slice_info.config 与 gcode 注释均无有效信息）",
+            }), 422
+        material = main_material(parsed)
+        quote = PricingService.describe(
+            parsed.get("filament_used_g") or 0,
+            parsed.get("print_time_s") or 0,
+            material, surcharge=False,
+        )
+        return jsonify({"code": 200, "data": {
+            "filaments": parsed.get("filaments"),
+            "nozzles": parsed.get("nozzles"),
+            "plate_index": parsed.get("plate_index"),
+            "material": material,
+            "filament_used_g": parsed.get("filament_used_g"),
+            "print_time_s": parsed.get("print_time_s"),
+            "quote": quote_to_jsonable(quote),
+        }})
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 @bp.route("/", methods=["GET"])

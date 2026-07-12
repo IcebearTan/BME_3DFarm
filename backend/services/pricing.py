@@ -16,6 +16,7 @@ class PricingService:
 
     BASE_FEE_KEY = "base_fee"
     MACHINE_HOUR_KEY = "machine_hour_price"
+    SURCHARGE_KEY = "manual_slice_surcharge"  # .3mf 走 admin 手动切片的固定手工费
     DEFAULT_MATERIAL = "PLA"
 
     @staticmethod
@@ -43,8 +44,11 @@ class PricingService:
         return Decimal(str(v))
 
     @staticmethod
-    def calc(weight_g, print_seconds, material=None):
-        """根据克重/时长/材料算 credit。返回 Decimal(0.01)。费率缺失项当 0。"""
+    def calc(weight_g, print_seconds, material=None, surcharge=False):
+        """根据克重/时长/材料算 credit。返回 Decimal(0.01)。费率缺失项当 0。
+
+        surcharge=True 加 manual_slice_surcharge（.3mf 走 admin 手动切片路径的固定手工费）。
+        """
         weight = PricingService._to_dec(weight_g)
         seconds = PricingService._to_dec(print_seconds)
         base_fee = PricingService._get(PricingService.BASE_FEE_KEY) or Decimal("0")
@@ -52,19 +56,33 @@ class PricingService:
         mat_price = PricingService.material_price(material)
 
         credit = base_fee + weight * mat_price + (seconds / Decimal("3600")) * machine_hour
+        if surcharge:
+            credit += PricingService._get(PricingService.SURCHARGE_KEY) or Decimal("0")
         return credit.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     @staticmethod
-    def describe(weight_g, print_seconds, material=None):
-        """报价明细 dict（给前端展示构成）。"""
+    def describe(weight_g, print_seconds, material=None, surcharge=False):
+        """报价明细 dict（给前端展示构成）。surcharge=True 时多 surcharge 字段。"""
         weight = PricingService._to_dec(weight_g)
         seconds = PricingService._to_dec(print_seconds)
         base_fee = PricingService._get(PricingService.BASE_FEE_KEY) or Decimal("0")
         machine_hour = PricingService._get(PricingService.MACHINE_HOUR_KEY) or Decimal("0")
         mat_price = PricingService.material_price(material)
+        surcharge_fee = (
+            (PricingService._get(PricingService.SURCHARGE_KEY) or Decimal("0"))
+            if surcharge else Decimal("0")
+        )
         return {
-            "credit": PricingService.calc(weight_g, print_seconds, material),
+            "credit": PricingService.calc(weight_g, print_seconds, material, surcharge=surcharge),
             "base_fee": base_fee,
             "material_cost": (weight * mat_price).quantize(Decimal("0.01")),
             "machine_cost": ((seconds / Decimal("3600")) * machine_hour).quantize(Decimal("0.01")),
+            "surcharge": surcharge_fee,
         }
+
+
+def quote_to_jsonable(quote):
+    """Decimal 报价明细 dict 转 JSON 可序列化（值转 str）。None 直返。"""
+    if not quote:
+        return None
+    return {k: str(v) for k, v in quote.items()}

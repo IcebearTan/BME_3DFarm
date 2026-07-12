@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import AppInput from '@/components/AppInput.vue'
 import AppButton from '@/components/AppButton.vue'
@@ -10,32 +10,72 @@ import { useForm } from '@/composables/useForm'
 import { toast } from '@/composables/useToast'
 
 const router = useRouter()
-const form = reactive({
-  material: '',
-  color: '',
-  quantity: 1,
-  layer_height: '',
-  nozzle_size: '',
-  customer_note: '',
-})
+// gcode 是唯一真相：不再手填 material/color/layer/nozzle，只留数量 + 备注
+const form = reactive({ quantity: 1, customer_note: '' })
 const file = ref(null)
 const loading = ref(false)
 
+// 文件预览状态（.gcode.3mf 路径）
+const previewing = ref(false)
+const preview = ref(null)       // preview 接口返回：filaments/material/quote/...
+const parseError = ref('')
+const isManualSlice = ref(false) // .3mf 路径：需 admin 切片
+
 const { errors, validate } = useForm(form, {
-  material: [(v) => !!v || '请填写材料'],
   quantity: [(v) => Number(v) >= 1 || '至少 1 件'],
 })
+
+// 选文件后按扩展名分支
+watch(file, async (nv) => {
+  preview.value = null
+  parseError.value = ''
+  isManualSlice.value = false
+  if (!nv) return
+  const name = nv.name.toLowerCase()
+  if (name.endsWith('.gcode.3mf')) {
+    previewing.value = true
+    try {
+      const fd = new FormData()
+      fd.append('file', nv.file, nv.name)
+      const res = await ordersApi.preview(fd)
+      if (res.code === 200) {
+        preview.value = res.data
+      } else {
+        parseError.value = res.message || '解析失败'
+      }
+    } catch (e) {
+      parseError.value = e.response?.data?.message || '无法解析该 gcode 文件'
+    } finally {
+      previewing.value = false
+    }
+  } else if (name.endsWith('.3mf')) {
+    isManualSlice.value = true
+  }
+})
+
+function fmtWeight(g) {
+  if (g == null) return '-'
+  return Number(g).toFixed(1) + ' g'
+}
+function fmtTime(s) {
+  if (s == null) return '-'
+  const m = Math.round(s / 60)
+  if (m < 60) return m + ' 分钟'
+  return Math.floor(m / 60) + 'h ' + (m % 60) + 'm'
+}
+// AMS tray_color 可能是 8 位 RGBA，截前 6 位 + 补 #
+function swatchColor(c) {
+  if (!c) return 'transparent'
+  const s = String(c).replace('#', '').slice(0, 6).toUpperCase()
+  return '#' + (s || 'transparent')
+}
 
 async function submit() {
   if (!validate()) return
   loading.value = true
   try {
     const fd = new FormData()
-    fd.append('material', form.material)
-    if (form.color) fd.append('color', form.color)
     fd.append('quantity', form.quantity)
-    if (form.layer_height) fd.append('layer_height', form.layer_height)
-    if (form.nozzle_size) fd.append('nozzle_size', form.nozzle_size)
     if (form.customer_note) fd.append('customer_note', form.customer_note)
     if (file.value) fd.append('file', file.value.file, file.value.name)
 
@@ -58,28 +98,23 @@ async function submit() {
   <div class="max-w-2xl mx-auto space-y-6">
     <div>
       <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">新建打印订单</h1>
-      <p class="text-sm text-zinc-400 mt-1">填写需求并上传模型，管理员审核报价</p>
+      <p class="text-sm text-zinc-400 mt-1">
+        上传模型文件，系统按 gcode 自动识别材料/颜色并报价（gcode 是唯一真相，无需手填材料）
+      </p>
     </div>
 
     <AppCard>
       <form @submit.prevent="submit" class="space-y-5">
         <div class="grid sm:grid-cols-2 gap-4">
           <AppInput
-            v-model="form.material" label="材料" placeholder="PLA / PETG / ABS"
-            :error="errors.material" required
-          />
-          <AppInput v-model="form.color" label="颜色" placeholder="可选" />
-          <AppInput
             v-model="form.quantity" type="number" label="数量" :error="errors.quantity"
           />
-          <AppInput v-model="form.layer_height" label="层高" placeholder="0.2" />
-          <AppInput v-model="form.nozzle_size" label="喷嘴" placeholder="0.4" />
         </div>
 
         <div>
           <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">备注</label>
           <textarea
-            v-model="form.customer_note" rows="3" placeholder="给管理员的说明…"
+            v-model="form.customer_note" rows="3" placeholder="给管理员的说明（颜色偏好、特殊要求等）…"
             class="w-full px-3.5 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/10 dark:focus:ring-white/10 focus:border-zinc-400"
           />
         </div>
@@ -87,6 +122,64 @@ async function submit() {
         <div>
           <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">模型文件</label>
           <FileDrop v-model="file" />
+          <p class="mt-1.5 text-xs text-zinc-400">
+            .gcode.3mf 自动报价；.3mf 需管理员切片后报价
+          </p>
+        </div>
+
+        <!-- 解析中 -->
+        <div v-if="previewing" class="text-sm text-zinc-400 flex items-center gap-2">
+          <span class="inline-block w-3 h-3 rounded-full border-2 border-zinc-300 border-t-zinc-600 animate-spin" />
+          正在解析 gcode…
+        </div>
+
+        <!-- 解析失败 -->
+        <div v-if="parseError" class="text-sm text-rose-500 bg-rose-50 dark:bg-rose-950/40 rounded-lg px-3 py-2">
+          {{ parseError }}（仍可提交，将进入人工报价）
+        </div>
+
+        <!-- .3mf 待切片提示 -->
+        <div v-if="isManualSlice" class="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
+          这是未切片的 .3mf 模型，提交后进入「待切片」状态，管理员切片后会自动报价。
+        </div>
+
+        <!-- gcode 预览卡 -->
+        <div v-if="preview" class="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium text-zinc-700 dark:text-zinc-300">报价预览</span>
+            <span class="text-xs text-zinc-400">主材料：{{ preview.material || '-' }}</span>
+          </div>
+
+          <!-- 多色 filament -->
+          <div v-if="preview.filaments?.length" class="space-y-1.5">
+            <div
+              v-for="f in preview.filaments" :key="f.id || f.type"
+              class="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400"
+            >
+              <span
+                class="inline-block w-4 h-4 rounded-full border border-zinc-300 dark:border-zinc-600"
+                :style="{ background: swatchColor(f.color) }"
+              />
+              <span class="font-medium">{{ f.type || '未知材料' }}</span>
+              <span class="text-zinc-400">{{ fmtWeight(f.used_g) }}</span>
+              <span class="text-zinc-300 dark:text-zinc-600 font-mono">{{ f.color }}</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="flex justify-between"><span class="text-zinc-400">总克重</span><span>{{ fmtWeight(preview.filament_used_g) }}</span></div>
+            <div class="flex justify-between"><span class="text-zinc-400">时长</span><span>{{ fmtTime(preview.print_time_s) }}</span></div>
+          </div>
+
+          <!-- 报价明细 -->
+          <div v-if="preview.quote" class="border-t border-zinc-200 dark:border-zinc-700 pt-2 space-y-1 text-xs">
+            <div class="flex justify-between text-zinc-500"><span>基础费</span><span>{{ preview.quote.base_fee }}</span></div>
+            <div class="flex justify-between text-zinc-500"><span>材料费</span><span>{{ preview.quote.material_cost }}</span></div>
+            <div class="flex justify-between text-zinc-500"><span>机时费</span><span>{{ preview.quote.machine_cost }}</span></div>
+            <div class="flex justify-between text-base font-semibold text-zinc-900 dark:text-zinc-100">
+              <span>合计</span><span>{{ preview.quote.credit }} credit</span>
+            </div>
+          </div>
         </div>
 
         <div class="flex justify-end gap-2 pt-2">

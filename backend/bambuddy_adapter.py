@@ -97,12 +97,18 @@ class BambuddyAdapter:
             )
         return resp.json() if resp.content else {}
 
-    def add_to_queue(self, archive_id, printer_id, plate=1):
-        """加入 Bambuddy 打印队列。返回 {id/queue_id/uid: ...}。"""
-        return self._request(
-            "POST", "/queue/",
-            json={"archive_id": archive_id, "printer_id": printer_id, "plate": plate},
-        )
+    def add_to_queue(self, archive_id, printer_id, plate_id=1, ams_mapping=None,
+                     use_ams=True):
+        """加入 Bambuddy 打印队列。返回 {id/queue_id/uid: ...}。
+
+        plate_id（非 plate）= 板件 id；ams_mapping=各 extruder 的 tray id 数组（透传给
+        Bambuddy，决定用哪个 AMS 料盘）。ams_mapping 给定时同时送 use_ams=True。
+        """
+        body = {"archive_id": archive_id, "printer_id": printer_id, "plate_id": plate_id}
+        if ams_mapping is not None:
+            body["ams_mapping"] = ams_mapping
+            body["use_ams"] = use_ams
+        return self._request("POST", "/queue/", json=body)
 
     def remove_queue_item(self, queue_id):
         """从 Bambuddy 队列移除。"""

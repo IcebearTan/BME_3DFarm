@@ -17,9 +17,9 @@ from services.storage import storage
 @celery.task(
     autoretry_for=(Exception,), retry_backoff=True, max_retries=3, retry_backoff_max=60
 )
-def dispatch_order(order_id, printer_id):
+def dispatch_order(order_id, printer_id, ams_mapping=None):
     """Celery 入口（生产 apply_async 异步；admin/测试可直调 _do_dispatch）。"""
-    return _do_dispatch(order_id, printer_id)
+    return _do_dispatch(order_id, printer_id, ams_mapping=ams_mapping)
 
 
 @celery.task
@@ -37,8 +37,11 @@ def _extract_id(resp, *keys):
     return None
 
 
-def _do_dispatch(order_id, printer_id):
-    """下发：MinIO 拉文件 → upload archive（复用已有 archive_id）→ add_to_queue → 建/更新 job。"""
+def _do_dispatch(order_id, printer_id, ams_mapping=None):
+    """下发：MinIO 拉文件 → upload archive（复用已有 archive_id）→ add_to_queue → 建/更新 job。
+
+    ams_mapping 透传给 add_to_queue（admin 手选或自动匹配的 AMS 料盘映射），并持久化到 job。
+    """
     order = db.session.get(PrintOrderModel, order_id)
     if not order:
         return {"status": "no_order"}
@@ -82,17 +85,19 @@ def _do_dispatch(order_id, printer_id):
         if not archive_id:
             raise BambuddyError(f"upload_archive 无 id: {upload_resp}")
 
-    queue_resp = adapter.add_to_queue(archive_id, printer_id)
+    queue_resp = adapter.add_to_queue(archive_id, printer_id, ams_mapping=ams_mapping)
     queue_id = _extract_id(queue_resp, "id", "queue_id", "uid")
 
     job.bambuddy_printer_id = printer_id
     job.bambuddy_archive_id = archive_id
     job.bambuddy_queue_id = queue_id
+    job.ams_mapping = ams_mapping
     job.filename = f.original_filename
     job.mapping_confidence = "exact"
     job.dispatched_at = datetime.now()
     db.session.commit()
-    return {"status": "dispatched", "archive_id": archive_id, "queue_id": queue_id}
+    return {"status": "dispatched", "archive_id": archive_id,
+            "queue_id": queue_id, "ams_mapping": ams_mapping}
 
 
 def _do_cancel(order_id):

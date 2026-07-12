@@ -10,6 +10,7 @@ DEFAULTS = [
     # (key, value, category, label, unit)
     ("base_fee", 2, "global", "基础开机费", "次"),
     ("machine_hour_price", 10, "global", "机时单价", "hour"),
+    ("manual_slice_surcharge", 5, "global", "手工切片费", "次"),
     ("material:PLA", 0.5, "material", "PLA", "g"),
     ("material:PETG", 0.6, "material", "PETG", "g"),
     ("material:ABS", 0.7, "material", "ABS", "g"),

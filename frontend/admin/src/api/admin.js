@@ -35,9 +35,14 @@ export const adminApi = {
   getBambuddyJob: (id) => service.get(`/admin/orders/${id}/bambuddy-job`),
   bindBambuddy: (id, data) => service.post(`/admin/orders/${id}/bind-bambuddy`, data),
 
-  // 下发 Bambuddy（Phase 3 半自动调度）
-  dispatchOrder: (id, printerId) =>
-    service.post(`/admin/orders/${id}/dispatch`, { bambuddy_printer_id: printerId }),
+  // 下发 Bambuddy（Phase 4：打印机下拉 + AMS 校验 + ams_mapping）
+  dispatchPreview: (id, printerId) =>
+    service.post(`/admin/orders/${id}/dispatch/preview`, { bambuddy_printer_id: printerId }),
+  dispatchOrder: (id, printerId, amsMapping) =>
+    service.post(`/admin/orders/${id}/dispatch`, {
+      bambuddy_printer_id: printerId,
+      ...(amsMapping ? { ams_mapping: amsMapping } : {}),
+    }),
   cancelDispatch: (id) => service.post(`/admin/orders/${id}/cancel-dispatch`),
 
   // 文件下载 + 切片产物上传（Phase 4 路径 B）

@@ -145,6 +145,10 @@ class PrintOrderModel(db.Model):
     # 预估（Phase 4 自动报价用，Phase 1 人工填）
     estimate_weight_g = db.Column(db.Numeric(10, 2), nullable=True)
     estimate_print_seconds = db.Column(db.Integer, nullable=True)
+    # Phase 3：gcode 解析产物（多色 filament/nozzle，下发 AMS 校验 + 计费用）+ 切片路径标记
+    parsed_filaments = db.Column(db.JSON, nullable=True)
+    parsed_nozzles = db.Column(db.JSON, nullable=True)
+    is_manual_slice_path = db.Column(db.Boolean, nullable=False, server_default="0")  # .3mf 走 admin 手动切片
     # credit
     estimated_credit = db.Column(db.Numeric(12, 2), nullable=True)
     frozen_credit = db.Column(db.Numeric(12, 2), nullable=False, server_default="0")
@@ -225,6 +229,8 @@ class BambuddyJobModel(db.Model):
     filename = db.Column(db.String(255), nullable=True)  # 文件名带 order_no，便于反查
     job_token = db.Column(db.String(128), nullable=True, unique=True, index=True)
     bambuddy_status = db.Column(db.String(64), nullable=True)
+    # Phase 4：下发用的 AMS 料盘映射（持久化追溯；admin 手选或自动匹配的 ams_mapping）
+    ams_mapping = db.Column(db.JSON, nullable=True)
     dispatched_at = db.Column(db.DateTime, nullable=True)
     started_at = db.Column(db.DateTime, nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
