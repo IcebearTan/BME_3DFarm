@@ -83,7 +83,7 @@ class BambuddyAdapter:
 
         本轮假设 POST /archives/；部署后对照 Bambuddy API Browser 调路径 + 返回字段。
         """
-        url = f"{self.base_url}/archives/"
+        url = f"{self.base_url}/archives/upload"
         files = {"file": (filename, file_bytes, content_type)}
         try:
             resp = httpx.post(
