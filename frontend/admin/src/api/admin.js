@@ -48,6 +48,8 @@ export const adminApi = {
   // 文件下载 + 切片产物上传（Phase 4 路径 B）
   downloadOrderFile: (orderId, fileId) =>
     service.get(`/admin/orders/${orderId}/files/${fileId}/download`, { responseType: "blob" }),
+  /** 订单预览图（PNG blob） */
+  orderPreview: (id) => service.get(`/admin/orders/${id}/preview`, { responseType: "blob" }),
   uploadSliced: (orderId, formData) =>
     service.post(`/admin/orders/${orderId}/upload-sliced`, formData, {
       headers: { "Content-Type": "multipart/form-data" },

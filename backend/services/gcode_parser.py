@@ -237,3 +237,30 @@ def main_material(parsed):
         return None
     best = max(filaments, key=lambda f: _try_float(f.get("used_g")) or 0)
     return best.get("type")
+
+
+def extract_preview_png(path, max_bytes=2 * 1024 * 1024):
+    """从 .gcode.3mf / .3mf 抽预览图 PNG 字节（BambuStudio 内嵌 Metadata/plate_1.png）。
+
+    优先 plate_1 / cover（主板件预览），否则首个 PNG。无图、超 max_bytes、坏 zip 返回 None。
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            pngs = [n for n in zf.namelist() if n.lower().endswith(".png")]
+            if not pngs:
+                return None
+
+            def prio(n):
+                low = n.lower()
+                for i, key in enumerate(("plate_1", "plate 1", "cover")):
+                    if key in low:
+                        return i
+                return 9
+
+            pngs.sort(key=prio)
+            info = zf.getinfo(pngs[0])
+            if info.file_size > max_bytes:
+                return None
+            return zf.read(pngs[0])
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return None

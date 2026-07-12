@@ -8,6 +8,7 @@ import AppButton from '@/components/AppButton.vue'
 import AppInput from '@/components/AppInput.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import AppCard from '@/components/AppCard.vue'
+import PreviewImage from '@/components/PreviewImage.vue'
 import { adminApi } from '@/api/admin'
 import { toast } from '@/composables/useToast'
 
@@ -494,6 +495,9 @@ onMounted(load)
               class="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 shadow-xl p-6 max-h-[85vh] overflow-y-auto"
             >
               <DialogTitle class="text-lg font-semibold mb-4">订单详情</DialogTitle>
+              <div v-if="detail" class="mb-4 max-w-[180px]">
+                <PreviewImage :loader="() => adminApi.orderPreview(detail.id)" />
+              </div>
               <div v-if="detail" class="space-y-2 text-sm">
                 <div class="flex justify-between"><span class="text-zinc-400">订单号</span><span class="font-mono">{{ detail.order_no }}</span></div>
                 <div class="flex justify-between"><span class="text-zinc-400">客户 ID</span><span>#{{ detail.user_id }}</span></div>

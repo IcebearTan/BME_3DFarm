@@ -145,6 +145,11 @@ async function submit() {
 
         <!-- gcode 预览卡 -->
         <div v-if="preview" class="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/40 p-4 space-y-3">
+          <img
+            v-if="preview.preview_image"
+            :src="preview.preview_image" alt="模型预览"
+            class="w-full max-h-64 object-contain rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700"
+          />
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-zinc-700 dark:text-zinc-300">报价预览</span>
             <span class="text-xs text-zinc-400">主材料：{{ preview.material || '-' }}</span>

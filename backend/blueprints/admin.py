@@ -33,7 +33,9 @@ from services import (
     AccountNotFoundError,
 )
 from services.storage import storage
-from services.gcode_parser import parse_gcode_3mf, main_material, extract_ams_expectation
+from services.gcode_parser import (
+    parse_gcode_3mf, main_material, extract_ams_expectation, extract_preview_png,
+)
 from services.pricing import PricingService, quote_to_jsonable
 from services.ams_matcher import match_ams
 from . import require_admin, _current_user
@@ -651,6 +653,30 @@ def cancel_dispatch(order_id):
 
 
 # ─────────── 文件下载 + 切片产物上传（Phase 4 路径 B） ───────────
+@bp.route("/orders/<int:order_id>/preview", methods=["GET"])
+@jwt_required()
+@require_admin
+def admin_order_preview_image(order_id):
+    """订单预览图 PNG（FILE_PREVIEW）。无图 404。"""
+    if not _get_order(order_id):
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    f = (
+        OrderFileModel.query
+        .filter_by(order_id=order_id, file_type=OrderFileModel.FILE_PREVIEW)
+        .order_by(OrderFileModel.id.desc())
+        .first()
+    )
+    if not f:
+        return jsonify({"code": 404, "message": "无预览图"}), 404
+    resp = storage.get_object(f.storage_key)
+    try:
+        data = resp.read()
+    finally:
+        resp.close()
+    return Response(data, mimetype="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
 @bp.route("/orders/<int:order_id>/files/<int:file_id>/download", methods=["GET"])
 @jwt_required()
 @require_admin
@@ -707,14 +733,17 @@ def upload_sliced(order_id):
 
     # 解析 gcode + 自动报价
     parsed = None
+    preview_png = None
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
         parsed = parse_gcode_3mf(tmp_path)
+        preview_png = extract_preview_png(tmp_path)
     except Exception:
         parsed = None
+        preview_png = None
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -749,6 +778,16 @@ def upload_sliced(order_id):
                 order, PrintOrderModel.STATUS_WAITING_CONFIRM,
                 actor_id=admin.id, note=f"切片产物上传，自动报价 {estimated}", _commit=False,
             )
+    # 预览图（覆盖旧预览：.3mf 路径首次有切片产物后才有预览）
+    if preview_png:
+        pkey = f"orders/{order_id}/preview_{uuid.uuid4().hex}.png"
+        storage.put_object(pkey, io.BytesIO(preview_png), len(preview_png),
+                           content_type="image/png")
+        db.session.add(OrderFileModel(
+            order_id=order_id, file_type=OrderFileModel.FILE_PREVIEW,
+            original_filename="preview.png", storage_key=pkey,
+            content_type="image/png", size_bytes=len(preview_png),
+        ))
     db.session.commit()
 
     return jsonify({

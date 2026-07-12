@@ -15,4 +15,6 @@ export const ordersApi = {
     }),
   confirm: (id) => service.post(`/orders/${id}/confirm`),
   cancel: (id) => service.post(`/orders/${id}/cancel`),
+  /** 订单预览图（PNG blob） */
+  previewImage: (id) => service.get(`/orders/${id}/preview`, { responseType: 'blob' }),
 }

@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import StatusBadge from './StatusBadge.vue'
 import AppButton from './AppButton.vue'
+import PreviewImage from './PreviewImage.vue'
+import { ordersApi } from '@/api/orders'
 
 const props = defineProps({ order: Object })
 const emit = defineEmits(['confirm', 'cancel', 'click'])
@@ -21,6 +23,8 @@ const canCancel = computed(() => !POST_PRINT.includes(props.order.status))
   <div
     class="rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 shadow-sm p-5 hover:shadow-md transition-shadow"
   >
+    <PreviewImage :loader="() => ordersApi.previewImage(order.id)" class="mb-4" />
+
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-xs font-mono text-zinc-400">{{ order.order_no }}</p>

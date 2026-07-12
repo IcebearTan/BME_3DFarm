@@ -13,7 +13,9 @@ import pytest
 from exts import db
 from models import UserModel
 from services.pricing import PricingService
-from services.gcode_parser import parse_gcode_3mf, extract_ams_expectation
+from services.gcode_parser import (
+    parse_gcode_3mf, extract_ams_expectation, extract_preview_png,
+)
 
 
 # ═══════════════════════════ PricingService.calc ═══════════════════════════
@@ -475,3 +477,109 @@ def test_create_order_no_material_required(app):
     r = client.post("/orders/", headers=_h(token), data={"customer_note": "描述需求"})
     assert r.status_code == 200
     assert r.get_json()["data"]["status"] == "QUOTING"
+
+
+# ═══════════════════════════ 预览图（PNG 抽取 + 存储 + 取图） ═══════════════════════════
+def test_extract_preview_png_prefers_plate_1(app):
+    """zip 含 Metadata/plate_1.png → 抽出；多 plate 时优先 plate_1。"""
+    plate1 = b"\x89PNG\r\n\x1a\nplate1-bytes"
+    plate2 = b"plate2-bytes"
+    with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as t:
+        path = t.name
+    try:
+        _make_gcode_3mf(path, {
+            "Metadata/plate_2.png": plate2,
+            "Metadata/plate_1.png": plate1,
+        })
+        assert extract_preview_png(path) == plate1
+    finally:
+        os.unlink(path)
+
+
+def test_extract_preview_png_cover_fallback(app):
+    """无 plate_1 时回退 cover / 首个 PNG。"""
+    cover = b"cover-bytes"
+    with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as t:
+        path = t.name
+    try:
+        _make_gcode_3mf(path, {"Metadata/cover.png": cover})
+        assert extract_preview_png(path) == cover
+    finally:
+        os.unlink(path)
+
+
+def test_extract_preview_png_none(app):
+    """无 PNG → None；坏 zip → None。"""
+    with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as t:
+        path = t.name
+    try:
+        _make_gcode_3mf(path, {"Metadata/plate_1.gcode": "; used_filament = 1g\n"})
+        assert extract_preview_png(path) is None
+    finally:
+        os.unlink(path)
+    with tempfile.NamedTemporaryFile(suffix=".gcode.3mf", delete=False) as t:
+        t.write(b"not a zip")
+        path = t.name
+    try:
+        assert extract_preview_png(path) is None
+    finally:
+        os.unlink(path)
+
+
+def _gcode_3mf_with_preview_buf(filament_g=20.0, time_s=3600, png=b"PREVIEW-PNG-DATA"):
+    """带预览图的 .gcode.3mf（gcode 注释 + Metadata/plate_1.png）。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "Metadata/plate_1.gcode",
+            f"; used_filament = {filament_g}g\n; total_time = {time_s}\nG0 X0\n",
+        )
+        zf.writestr("Metadata/plate_1.png", png)
+    buf.seek(0)
+    return buf
+
+
+def test_preview_returns_base64_image(app):
+    """/orders/preview 返回 preview_image（data:image/png;base64,...）。"""
+    client = app.test_client()
+    _, token = _register(client, app, "previmg@x.com")
+    png = b"\x89PNG\r\n\x1a\nfake"
+    r = client.post(
+        "/orders/preview", headers=_h(token),
+        data={"file": (_gcode_3mf_with_preview_buf(png=png), "m.gcode.3mf")},
+        content_type="multipart/form-data",
+    )
+    assert r.status_code == 200, r.get_json()
+    data = r.get_json()["data"]
+    assert data["preview_image"].startswith("data:image/png;base64,")
+    # base64 解码回原 PNG
+    import base64 as _b64
+    assert _b64.b64decode(data["preview_image"].split(",", 1)[1]) == png
+
+
+def test_create_order_stores_preview_and_serves(app):
+    """create_order 存 FILE_PREVIEW；GET /orders/{id}/preview 返回 PNG。"""
+    client = app.test_client()
+    _, token = _register(client, app, "storeprev@x.com")
+    png = b"\x89PNG\r\n\x1a\nstore-fake"
+    r = client.post(
+        "/orders/", headers=_h(token),
+        data={"file": (_gcode_3mf_with_preview_buf(png=png), "m.gcode.3mf")},
+        content_type="multipart/form-data",
+    )
+    assert r.status_code == 200, r.get_json()
+    oid = r.get_json()["data"]["id"]
+
+    # GET 预览图
+    img = client.get(f"/orders/{oid}/preview", headers=_h(token))
+    assert img.status_code == 200
+    assert img.mimetype == "image/png"
+    assert img.data == png
+
+    # 无预览图的订单 → 404（建一个无文件订单）
+    oid2 = client.post("/orders/", headers=_h(token), data={"customer_note": "x"}).get_json()["data"]["id"]
+    assert client.get(f"/orders/{oid2}/preview", headers=_h(token)).status_code == 404
+
+    # 越权：别的用户拿不到
+    _, token2 = _register(client, app, "other@x.com")
+    assert client.get(f"/orders/{oid}/preview", headers=_h(token2)).status_code == 404

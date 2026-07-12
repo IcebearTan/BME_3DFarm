@@ -4,13 +4,15 @@
 事务原子性：confirm/cancel 把 credit 操作与状态转换组合在单一事务（_commit=False
 + 统一 commit），任一步失败全回滚。
 """
+import base64
 import hashlib
+import io
 import os
 import tempfile
 import uuid
 from datetime import datetime
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required
 
 from exts import db
@@ -22,7 +24,7 @@ from services import (
     InvalidTransitionError,
 )
 from services.storage import storage
-from services.gcode_parser import parse_gcode_3mf, main_material
+from services.gcode_parser import parse_gcode_3mf, main_material, extract_preview_png
 from services.pricing import PricingService, quote_to_jsonable
 from . import _current_user
 
@@ -153,6 +155,9 @@ def create_order():
         # .3mf 模型 → admin 手动切片路径
         is_manual_slice_path = True
 
+    # 预览图：.gcode.3mf / .3mf 都是 zip，都可能内嵌 Metadata/plate_1.png
+    preview_png = extract_preview_png(file_meta["tmp_path"]) if file_meta else None
+
     # 建 order（commit 拿 id，用于 storage key）
     order_no = f"PO{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
     status = (PrintOrderModel.STATUS_WAITING_CONFIRM if estimated_credit is not None
@@ -193,6 +198,19 @@ def create_order():
                 size_bytes=file_meta["size"],
                 sha256=file_meta["sha256"],
             ))
+            # 预览图单独存一份 FILE_PREVIEW（订单详情/打印监控展示用）
+            if preview_png:
+                pkey = f"orders/{order.id}/preview_{uuid.uuid4().hex}.png"
+                storage.put_object(pkey, io.BytesIO(preview_png), len(preview_png),
+                                   content_type="image/png")
+                db.session.add(OrderFileModel(
+                    order_id=order.id,
+                    file_type=OrderFileModel.FILE_PREVIEW,
+                    original_filename="preview.png",
+                    storage_key=pkey,
+                    content_type="image/png",
+                    size_bytes=len(preview_png),
+                ))
             db.session.commit()
         finally:
             if os.path.exists(file_meta["tmp_path"]):
@@ -271,6 +289,11 @@ def preview_order():
             parsed.get("print_time_s") or 0,
             material, surcharge=False,
         )
+        # 预览图：从 zip 抽 Metadata/plate_1.png，base64 内联（≤256KB 才内联，避免响应过大）
+        preview_b64 = None
+        png = extract_preview_png(tmp_path, max_bytes=512 * 1024)
+        if png and len(png) <= 256 * 1024:
+            preview_b64 = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
         return jsonify({"code": 200, "data": {
             "filaments": parsed.get("filaments"),
             "nozzles": parsed.get("nozzles"),
@@ -279,6 +302,7 @@ def preview_order():
             "filament_used_g": parsed.get("filament_used_g"),
             "print_time_s": parsed.get("print_time_s"),
             "quote": quote_to_jsonable(quote),
+            "preview_image": preview_b64,
         }})
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -321,6 +345,33 @@ def order_detail(order_id):
     if not order:
         return jsonify({"code": 404, "message": "订单不存在"}), 404
     return jsonify({"code": 200, "data": _order_to_dict(order)})
+
+
+@bp.route("/<int:order_id>/preview", methods=["GET"])
+@jwt_required()
+def order_preview_image(order_id):
+    """订单预览图（FILE_PREVIEW 的 PNG）。owner 校验；无图 404。"""
+    user = _current_user()
+    if not user:
+        return jsonify({"code": 404, "message": "用户不存在"}), 404
+    order = _owned_order_or_404(order_id, user.id)
+    if not order:
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    f = (
+        OrderFileModel.query
+        .filter_by(order_id=order_id, file_type=OrderFileModel.FILE_PREVIEW)
+        .order_by(OrderFileModel.id.desc())
+        .first()
+    )
+    if not f:
+        return jsonify({"code": 404, "message": "无预览图"}), 404
+    resp = storage.get_object(f.storage_key)
+    try:
+        data = resp.read()
+    finally:
+        resp.close()
+    return Response(data, mimetype="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 @bp.route("/<int:order_id>/confirm", methods=["POST"])
