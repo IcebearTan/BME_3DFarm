@@ -26,6 +26,12 @@ const routes = [
     component: () => import('@/views/PricingView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/printers',
+    name: 'printers',
+    component: () => import('@/views/PrintersView.vue'),
+    meta: { requiresAuth: true },
+  },
 ]
 
 const router = createRouter({

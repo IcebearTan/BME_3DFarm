@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Boxes, Sun, Moon, LogOut, Wallet, Plus, List } from 'lucide-vue-next'
+import { Boxes, Sun, Moon, LogOut, Wallet, Plus, List, Printer } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { creditApi } from '@/api/credit'
@@ -70,6 +70,9 @@ defineExpose({ loadBalance })
         </router-link>
         <router-link :to="{ name: 'orders' }" v-slot="{ isActive }" :class="navClass(isActive)">
           <List class="w-4 h-4" /><span class="hidden sm:inline">订单</span>
+        </router-link>
+        <router-link :to="{ name: 'printers' }" v-slot="{ isActive }" :class="navClass(isActive)">
+          <Printer class="w-4 h-4" /><span class="hidden sm:inline">打印机</span>
         </router-link>
         <router-link
           :to="{ name: 'new-order' }"

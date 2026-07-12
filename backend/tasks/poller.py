@@ -6,9 +6,11 @@
 同步逻辑抽成 _do_sync() 纯函数，Celery 入口（sync_active_orders）只做包装，测试可绕过 celery 直调。
 gcode_state → 事件映射以 Bambuddy 实测为准（保守，本轮只更新进度 + 明确的 failed/finish）。
 """
+from datetime import datetime
+
 from celery_app import celery
 from exts import db
-from models import PrintOrderModel, BambuddyJobModel
+from models import PrintOrderModel, BambuddyJobModel, PrinterModel
 from bambuddy_adapter import BambuddyAdapter, BambuddyError
 from services.bambuddy_sync import apply_event
 
@@ -87,3 +89,75 @@ def _apply_printer_status(order, status):
         apply_event(order, state_event)
 
     db.session.commit()
+
+
+# ─────────────────────────────────────────────────────────────────
+# 打印机状态同步（Phase 4.5）—— 真机 + Virtual Printer → printer 表
+# ─────────────────────────────────────────────────────────────────
+@celery.task(
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+    retry_backoff_max=60,
+)
+def sync_printers():
+    """Celery 入口（beat 每 30s 触发）。"""
+    return _do_sync_printers()
+
+
+def _map_printer_status(status_data):
+    """Bambuddy status（gcode_state/running）→ PrinterModel status 枚举。"""
+    if isinstance(status_data, dict):
+        gs = (status_data.get("gcode_state") or status_data.get("state") or "").lower()
+        if gs in ("running", "busy", "preparing"):
+            return PrinterModel.STATUS_PRINTING
+        if gs in ("idle", "finish", "finished", "standby"):
+            return PrinterModel.STATUS_IDLE
+        if gs in ("failed", "error", "fault"):
+            return PrinterModel.STATUS_ERROR
+        if status_data.get("running") is True:
+            return PrinterModel.STATUS_PRINTING
+    return PrinterModel.STATUS_OFFLINE
+
+
+def _do_sync_printers():
+    """同步 Bambuddy 真机 + Virtual Printer → printer 表（status + status_detail）。"""
+    adapter = BambuddyAdapter()
+    items = []
+    # 真机（/printers/）
+    try:
+        for p in (adapter.list_printers() or []):
+            items.append(("real", p))
+    except BambuddyError:
+        pass
+    # Virtual Printer（/virtual-printers）
+    try:
+        vp = adapter._request("GET", "/virtual-printers")
+        for p in (vp.get("printers", []) if isinstance(vp, dict) else []):
+            items.append(("virtual", p))
+    except BambuddyError:
+        pass
+
+    for source, p in items:
+        pid = p.get("id")
+        if pid is None:
+            continue
+        row = PrinterModel.query.filter_by(
+            bambuddy_printer_id=pid, source=source
+        ).first()
+        if not row:
+            row = PrinterModel(
+                public_name=p.get("name") or f"Printer-{pid}",
+                bambuddy_printer_id=pid,
+                source=source,
+                model=p.get("model_name") or p.get("model") or "P1S",
+            )
+            db.session.add(row)
+        st = p.get("status") if isinstance(p.get("status"), dict) else {}
+        row.status = _map_printer_status(st)
+        row.status_detail = st or None
+        row.last_seen_at = datetime.now()
+        if source == "virtual":
+            row.enabled = bool(p.get("enabled", True))
+    db.session.commit()
+    return {"printers_synced": len(items)}

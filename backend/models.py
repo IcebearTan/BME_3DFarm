@@ -204,6 +204,10 @@ class PrinterModel(db.Model):
     status = db.Column(db.String(32), nullable=False, server_default=STATUS_OFFLINE, index=True)
     last_seen_at = db.Column(db.DateTime, nullable=True)
     enabled = db.Column(db.Boolean, nullable=False, server_default="1")
+    # Phase 4.5 打印机监控（Poller 从 Bambuddy 同步）
+    source = db.Column(db.String(20), nullable=True)  # virtual / real
+    status_detail = db.Column(db.JSON, nullable=True)  # 温度/进度/AMS 等 Bambuddy status 快照
+    queue_count = db.Column(db.Integer, nullable=False, server_default="0")  # 该机队列长度
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 

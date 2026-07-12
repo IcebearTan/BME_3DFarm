@@ -22,7 +22,7 @@ from flask_jwt_extended import jwt_required
 from exts import db
 from models import (
     PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel,
-    BambuddyJobModel, OrderFileModel,
+    BambuddyJobModel, OrderFileModel, PrinterModel,
 )
 from services import (
     CreditService,
@@ -657,5 +657,17 @@ def upload_sliced(order_id):
 @jwt_required()
 @require_admin
 def list_printers():
-    """打印机状态总览。Phase 0 录入 + Phase 2 从 Bambuddy 同步。"""
-    return jsonify({"code": 200, "data": [], "message": "TODO: Phase 0 录入 + Phase 2 同步"})
+    """打印机状态总览（全量：含 status_detail 温度/进度，Poller 每 30s 同步）。"""
+    printers = PrinterModel.query.order_by(PrinterModel.id).all()
+    items = [
+        {
+            "id": p.id, "public_name": p.public_name, "internal_name": p.internal_name,
+            "bambuddy_printer_id": p.bambuddy_printer_id, "model": p.model,
+            "has_ams": p.has_ams, "status": p.status, "source": p.source,
+            "status_detail": p.status_detail, "queue_count": p.queue_count,
+            "last_seen_at": p.last_seen_at.isoformat() if p.last_seen_at else None,
+            "enabled": p.enabled,
+        }
+        for p in printers
+    ]
+    return jsonify({"code": 200, "data": {"items": items}})

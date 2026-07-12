@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ShieldCheck, Sun, Moon, LogOut, ListOrdered, Coins, DollarSign } from 'lucide-vue-next'
+import { ShieldCheck, Sun, Moon, LogOut, ListOrdered, Coins, DollarSign, Printer } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { authApi } from '@/api/auth'
@@ -53,6 +53,9 @@ onMounted(async () => {
       <nav class="flex items-center gap-1">
         <router-link :to="{ name: 'orders' }" v-slot="{ isActive }" :class="navClass(isActive)">
           <ListOrdered class="w-4 h-4" /><span class="hidden sm:inline">订单</span>
+        </router-link>
+        <router-link :to="{ name: 'printers' }" v-slot="{ isActive }" :class="navClass(isActive)">
+          <Printer class="w-4 h-4" /><span class="hidden sm:inline">打印机</span>
         </router-link>
         <router-link :to="{ name: 'credit' }" v-slot="{ isActive }" :class="navClass(isActive)">
           <Coins class="w-4 h-4" /><span class="hidden sm:inline">发额度</span>

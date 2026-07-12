@@ -23,12 +23,13 @@ from models import (
     PrintEventModel,
     BambuddyJobModel,
     PricingConfigModel,
+    PrinterModel,
 )
 from services import CreditService
 from services.storage import storage
 from flask_jwt_extended import JWTManager
 from blueprints import (
-    auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp,
+    auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp, printers_bp,
 )
 
 # 费率默认种子（与 seed_pricing.py 一致；每个测试前重置，PricingService 依赖）
@@ -50,7 +51,7 @@ def app():
     db.init_app(app)
     storage.init_app(app)
     JWTManager(app)
-    for bp in (auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp):
+    for bp in (auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp, printers_bp):
         app.register_blueprint(bp)
     with app.app_context():
         db.create_all()
@@ -73,6 +74,7 @@ def _clean_tables(app):
         # 按外键依赖顺序删（子表先于父表）
         db.session.query(PrintEventModel).delete()
         db.session.query(BambuddyJobModel).delete()
+        db.session.query(PrinterModel).delete()
         db.session.query(CreditTransactionModel).delete()
         db.session.query(CreditAccountModel).delete()
         db.session.query(OrderFileModel).delete()

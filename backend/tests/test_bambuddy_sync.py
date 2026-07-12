@@ -221,3 +221,60 @@ def test_poller_bambuddy_unreachable_no_crash(app, make_user, monkeypatch):
         assert result["total"] >= 1
         order = db.session.get(PrintOrderModel, oid)
         assert order.status == PrintOrderModel.STATUS_PRINTING  # 未变
+
+
+# ═══════════════════════════ 打印机状态同步（Phase 4.5） ═══════════════════════════
+def test_sync_printers_real_and_virtual(app, monkeypatch):
+    """Poller sync_printers：真机 + VP → printer 表（source 区分 + status 映射）。"""
+    from models import PrinterModel
+    from tasks import poller
+    monkeypatch.setattr(
+        poller.BambuddyAdapter, "list_printers",
+        lambda self: [{"id": 10, "name": "Real-P1S", "model_name": "P1S",
+                       "status": {"gcode_state": "running"}}],
+    )
+    monkeypatch.setattr(
+        poller.BambuddyAdapter, "_request",
+        lambda self, m, p: {"printers": [
+            {"id": 1, "name": "VP-P1S", "model": "C12", "model_name": "P1S",
+             "enabled": True, "status": {"running": False}}
+        ]} if "virtual" in p.lower() else {},
+    )
+    with app.app_context():
+        result = poller._do_sync_printers()
+        assert result["printers_synced"] == 2
+        real = PrinterModel.query.filter_by(source="real", bambuddy_printer_id=10).first()
+        assert real is not None
+        assert real.status == PrinterModel.STATUS_PRINTING
+        vp = PrinterModel.query.filter_by(source="virtual", bambuddy_printer_id=1).first()
+        assert vp is not None
+        assert vp.status == PrinterModel.STATUS_OFFLINE  # running False → offline
+
+
+def test_printers_endpoints_admin_vs_customer(app, monkeypatch):
+    """admin /admin/printers 全量（含 status_detail）vs customer /printers/ 脱敏（无）。"""
+    from tasks import poller
+    monkeypatch.setattr(
+        poller.BambuddyAdapter, "list_printers",
+        lambda self: [{"id": 1, "name": "P1", "model_name": "P1S",
+                       "status": {"nozzle_temp": "220", "mc_percent": 45}}],
+    )
+    monkeypatch.setattr(poller.BambuddyAdapter, "_request", lambda self, *a, **kw: {"printers": []})
+    client = app.test_client()
+    cuid, ctoken = _register(client, app, "pcust@x.com")
+    _, atoken = _register(client, app, "padmin@x.com", role="admin")
+
+    with app.app_context():
+        poller._do_sync_printers()
+
+    r = client.get("/admin/printers", headers=_h(atoken))
+    items = r.get_json()["data"]["items"]
+    assert len(items) == 1
+    assert "status_detail" in items[0]
+
+    r = client.get("/printers/", headers=_h(ctoken))
+    assert r.status_code == 200, f"customer /printers/ {r.status_code}: {r.data[:300]}"
+    items = r.get_json()["data"]["items"]
+    assert len(items) == 1
+    assert "status_detail" not in items[0]  # 脱敏
+    assert "status" in items[0]

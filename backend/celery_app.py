@@ -42,5 +42,9 @@ celery.conf.beat_schedule = {
         "task": "tasks.poller.sync_active_orders",
         "schedule": 30.0,
     },
+    "sync-printers": {
+        "task": "tasks.poller.sync_printers",
+        "schedule": 30.0,
+    },
 }
 celery.conf.timezone = "UTC"

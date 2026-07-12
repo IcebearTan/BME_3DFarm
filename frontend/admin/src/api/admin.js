@@ -28,6 +28,9 @@ export const adminApi = {
   addPricing: (data) => service.post('/admin/pricing', data),
   updatePricing: (id, data) => service.put(`/admin/pricing/${id}`, data),
 
+  // 打印机监控（Phase 4.5，Poller 同步）
+  getPrinters: () => service.get('/admin/printers'),
+
   // Bambuddy 任务绑定（Phase 2）
   getBambuddyJob: (id) => service.get(`/admin/orders/${id}/bambuddy-job`),
   bindBambuddy: (id, data) => service.post(`/admin/orders/${id}/bind-bambuddy`, data),
