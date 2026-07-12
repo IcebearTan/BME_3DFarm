@@ -15,7 +15,9 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 
 from exts import db
-from models import PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel
+from models import (
+    PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel, BambuddyJobModel,
+)
 from services import (
     CreditService,
     OrderStateMachine,
@@ -420,6 +422,70 @@ def update_pricing(pid):
         p.label = data["label"]
     db.session.commit()
     return jsonify({"code": 200, "message": "已更新", "data": _pricing_to_dict(p)})
+
+
+# ─────────── Bambuddy 任务绑定（Phase 2） ───────────
+def _job_to_dict(job):
+    if not job:
+        return None
+    return {
+        "id": job.id, "order_id": job.order_id, "order_no": job.order_no,
+        "bambuddy_printer_id": job.bambuddy_printer_id,
+        "bambuddy_queue_id": job.bambuddy_queue_id,
+        "bambuddy_archive_id": job.bambuddy_archive_id,
+        "filename": job.filename, "job_token": job.job_token,
+        "bambuddy_status": job.bambuddy_status,
+        "mapping_confidence": job.mapping_confidence,
+        "dispatched_at": job.dispatched_at.isoformat() if job.dispatched_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "last_sync_at": job.last_sync_at.isoformat() if job.last_sync_at else None,
+    }
+
+
+@bp.route("/orders/<int:order_id>/bambuddy-job", methods=["GET"])
+@jwt_required()
+@require_admin
+def get_bambuddy_job(order_id):
+    """查订单绑定的 Bambuddy 任务。"""
+    if not _get_order(order_id):
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    job = BambuddyJobModel.query.filter_by(order_id=order_id).first()
+    return jsonify({"code": 200, "data": _job_to_dict(job)})
+
+
+@bp.route("/orders/<int:order_id>/bind-bambuddy", methods=["POST"])
+@jwt_required()
+@require_admin
+def bind_bambuddy(order_id):
+    """手动绑定订单 ↔ Bambuddy 任务（mapping_confidence=manual）。
+
+    body: {bambuddy_printer_id(必填), bambuddy_queue_id?, bambuddy_archive_id?, filename?, job_token?}
+    """
+    order = _get_order(order_id)
+    if not order:
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    printer_id = data.get("bambuddy_printer_id")
+    if printer_id is None:
+        return jsonify({"code": 400, "message": "bambuddy_printer_id 必填"}), 400
+
+    job = BambuddyJobModel.query.filter_by(order_id=order_id).first()
+    if not job:
+        job = BambuddyJobModel(order_id=order_id, order_no=order.order_no)
+        db.session.add(job)
+    job.bambuddy_printer_id = printer_id
+    if data.get("bambuddy_queue_id") is not None:
+        job.bambuddy_queue_id = data["bambuddy_queue_id"]
+    if data.get("bambuddy_archive_id") is not None:
+        job.bambuddy_archive_id = data["bambuddy_archive_id"]
+    if data.get("filename") is not None:
+        job.filename = data["filename"]
+    if data.get("job_token") is not None:
+        job.job_token = data["job_token"]
+    job.mapping_confidence = "manual"
+    db.session.commit()
+    return jsonify({"code": 200, "message": "已绑定", "data": _job_to_dict(job)})
 
 
 # ─────────── 打印机（Phase 2） ───────────

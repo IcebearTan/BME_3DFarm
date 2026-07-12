@@ -35,3 +35,12 @@ def make_celery(flask_app):
 
 
 celery = make_celery(app)
+
+# Beat 定时任务（Phase 2 Poller 每 30s 同步活跃订单）
+celery.conf.beat_schedule = {
+    "sync-active-orders": {
+        "task": "tasks.poller.sync_active_orders",
+        "schedule": 30.0,
+    },
+}
+celery.conf.timezone = "UTC"

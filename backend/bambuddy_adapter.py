@@ -68,3 +68,11 @@ class BambuddyAdapter:
 
     def get_archive(self, archive_id):
         return self._request("GET", f"/archives/{archive_id}")
+
+    # ── 只读+（Phase 2）──
+    def get_queue_item(self, queue_id):
+        return self._request("GET", f"/queue/{queue_id}")
+
+    def get_printer_jobs(self, printer_id):
+        """打印机当前/历史任务（路径以 Bambuddy 实测为准，先试 /printers/{id}/jobs）。"""
+        return self._request("GET", f"/printers/{printer_id}/jobs")

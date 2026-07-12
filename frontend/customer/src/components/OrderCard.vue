@@ -39,6 +39,19 @@ const canCancel = computed(() => !POST_PRINT.includes(props.order.status))
       </span>
     </div>
 
+    <div v-if="order.public_progress > 0" class="mt-3">
+      <div class="flex justify-between text-xs text-zinc-400 mb-1">
+        <span>{{ order.public_status }}</span>
+        <span>{{ order.public_progress }}%</span>
+      </div>
+      <div class="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+        <div
+          class="h-full bg-indigo-500 rounded-full transition-all"
+          :style="{ width: order.public_progress + '%' }"
+        ></div>
+      </div>
+    </div>
+
     <div class="mt-4 flex gap-2">
       <AppButton variant="subtle" size="sm" @click="emit('click')">详情</AppButton>
       <AppButton v-if="canConfirm" variant="primary" size="sm" @click="emit('confirm')">

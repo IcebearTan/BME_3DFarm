@@ -1,0 +1,89 @@
+"""Poller：定时同步活跃订单状态（Celery Beat 每 30s 触发）。
+
+查 PRINTING + 已绑 BambuddyJob 的订单 → 调 adapter 读 printer_status → 更新进度 + 检测完成/失败。
+是 Webhook 的兜底：Webhook 丢了/延迟，Poller 还能补；Bambuddy 不可达不崩。
+
+同步逻辑抽成 _do_sync() 纯函数，Celery 入口（sync_active_orders）只做包装，测试可绕过 celery 直调。
+gcode_state → 事件映射以 Bambuddy 实测为准（保守，本轮只更新进度 + 明确的 failed/finish）。
+"""
+from celery_app import celery
+from exts import db
+from models import PrintOrderModel, BambuddyJobModel
+from bambuddy_adapter import BambuddyAdapter, BambuddyError
+from services.bambuddy_sync import apply_event
+
+
+@celery.task(
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=3,
+    retry_backoff_max=60,
+)
+def sync_active_orders():
+    """Celery 入口（beat 每 30s 触发）。"""
+    return _do_sync()
+
+
+def _do_sync():
+    """同步所有 PRINTING + 已绑 BambuddyJob 的订单。返回 {synced, total}。"""
+    jobs = (
+        db.session.query(BambuddyJobModel)
+        .join(PrintOrderModel, PrintOrderModel.id == BambuddyJobModel.order_id)
+        .filter(PrintOrderModel.status == PrintOrderModel.STATUS_PRINTING)
+        .all()
+    )
+    if not jobs:
+        return {"synced": 0, "total": 0}
+
+    adapter = BambuddyAdapter()
+    synced = 0
+    for job in jobs:
+        if not job.bambuddy_printer_id:
+            continue
+        try:
+            status = adapter.get_printer_status(job.bambuddy_printer_id)
+            order = db.session.get(PrintOrderModel, job.order_id)
+            if order:
+                _apply_printer_status(order, status)
+                synced += 1
+        except BambuddyError:
+            # 单台/单订单失败不拖垮整轮
+            db.session.rollback()
+            continue
+    return {"synced": synced, "total": len(jobs)}
+
+
+def _apply_printer_status(order, status):
+    """根据 Bambuddy printer_status 更新订单进度 + 检测完成/失败。
+
+    Bambuddy printer_status 典型字段：gcode_state / mc_percent / mc_remaining_time。
+    gcode_state → 事件映射保守（实测后扩）：finish/succeeded→complete、failed→failed。
+    """
+    if not isinstance(status, dict):
+        return
+
+    gcode_state = (status.get("gcode_state") or status.get("state") or "").lower()
+    mc_percent = status.get("mc_percent")
+    mc_remaining = status.get("mc_remaining_time") or status.get("mc_remaining")
+
+    if mc_percent is not None:
+        try:
+            order.public_progress = max(0, min(100, int(float(mc_percent))))
+        except (ValueError, TypeError):
+            pass
+    if mc_remaining is not None:
+        try:
+            order.remaining_seconds = int(float(mc_remaining))
+        except (ValueError, TypeError):
+            pass
+
+    state_event = {
+        "finish": "complete",
+        "finished": "complete",
+        "succeeded": "complete",
+        "failed": "failed",
+    }.get(gcode_state)
+    if state_event:
+        apply_event(order, state_event)
+
+    db.session.commit()

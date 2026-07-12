@@ -43,6 +43,9 @@ BAMBUDDY_API_KEY = os.getenv("BAMBUDDY_API_KEY", "")
 # ── 内部 API（给训练营预留的 credit 发放接口鉴权）──
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "change-me")
 
+# ── Webhook（Bambuddy 事件回调鉴权，Phase 2）──
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "dev-webhook-secret")
+
 # ── MinIO（3D 模型文件存储）──
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "127.0.0.1:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")

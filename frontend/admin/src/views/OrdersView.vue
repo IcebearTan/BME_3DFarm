@@ -36,6 +36,11 @@ const acting = ref(false)
 // 金额操作 dialog（quote / complete / refund 共用）
 const amountDialog = reactive({ open: false, action: '', order: null, amount: '', title: '' })
 
+// Bambuddy 任务绑定（Phase 2）
+const bambuddyJob = ref(null)
+const bindForm = reactive({ bambuddy_printer_id: '', bambuddy_archive_id: '' })
+const binding = ref(false)
+
 async function load() {
   loading.value = true
   try {
@@ -57,12 +62,42 @@ function onFilter() {
 async function openDetail(o) {
   try {
     detail.value = (await adminApi.orderDetail(o.id)).data
+    bambuddyJob.value = (await adminApi.getBambuddyJob(o.id)).data
   } catch {
     /* 静默 */
   }
 }
 async function refreshDetail() {
-  if (detail.value) detail.value = (await adminApi.orderDetail(detail.value.id)).data
+  if (!detail.value) return
+  detail.value = (await adminApi.orderDetail(detail.value.id)).data
+  bambuddyJob.value = (await adminApi.getBambuddyJob(detail.value.id)).data
+}
+async function doBind() {
+  if (!bindForm.bambuddy_printer_id) {
+    toast.error('请填 printer_id')
+    return
+  }
+  binding.value = true
+  try {
+    const res = await adminApi.bindBambuddy(detail.value.id, {
+      bambuddy_printer_id: Number(bindForm.bambuddy_printer_id),
+      bambuddy_archive_id: bindForm.bambuddy_archive_id
+        ? Number(bindForm.bambuddy_archive_id)
+        : undefined,
+    })
+    if (res.code === 200) {
+      toast.success('已绑定')
+      bambuddyJob.value = res.data
+      bindForm.bambuddy_printer_id = ''
+      bindForm.bambuddy_archive_id = ''
+    } else {
+      toast.error(res.message || '绑定失败')
+    }
+  } catch (e) {
+    toast.error(e.response?.data?.message || '失败')
+  } finally {
+    binding.value = false
+  }
 }
 
 async function simpleAction(o, label, fn) {
@@ -297,6 +332,27 @@ onMounted(load)
                 <div v-if="detail.files?.length" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
                   <span class="text-zinc-400">文件</span>
                   <p class="mt-1 font-mono text-xs break-all">{{ detail.files[0].original_filename }}</p>
+                </div>
+                <!-- Bambuddy 任务绑定（Phase 2）-->
+                <div class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  <span class="text-zinc-400">Bambuddy 任务</span>
+                  <p v-if="bambuddyJob" class="mt-1 text-xs text-zinc-500">
+                    printer #{{ bambuddyJob.bambuddy_printer_id }}
+                    <span v-if="bambuddyJob.bambuddy_archive_id">· archive {{ bambuddyJob.bambuddy_archive_id }}</span>
+                    · {{ bambuddyJob.mapping_confidence }}
+                  </p>
+                  <p v-else class="mt-1 text-xs text-zinc-400">未绑定（Poller/Webhook 需先绑定才能匹配）</p>
+                  <div class="mt-2 flex gap-2">
+                    <input
+                      v-model="bindForm.bambuddy_printer_id" placeholder="printer_id"
+                      class="w-28 h-8 px-2 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs focus:outline-none"
+                    />
+                    <input
+                      v-model="bindForm.bambuddy_archive_id" placeholder="archive_id"
+                      class="w-28 h-8 px-2 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs focus:outline-none"
+                    />
+                    <AppButton size="xs" :loading="binding" @click="doBind">绑定</AppButton>
+                  </div>
                 </div>
               </div>
               <div class="flex justify-end mt-5">

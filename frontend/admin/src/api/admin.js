@@ -27,4 +27,8 @@ export const adminApi = {
   getPricing: () => service.get('/admin/pricing'),
   addPricing: (data) => service.post('/admin/pricing', data),
   updatePricing: (id, data) => service.put(`/admin/pricing/${id}`, data),
+
+  // Bambuddy 任务绑定（Phase 2）
+  getBambuddyJob: (id) => service.get(`/admin/orders/${id}/bambuddy-job`),
+  bindBambuddy: (id, data) => service.post(`/admin/orders/${id}/bind-bambuddy`, data),
 }
