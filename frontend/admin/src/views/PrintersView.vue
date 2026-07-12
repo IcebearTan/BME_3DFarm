@@ -32,6 +32,18 @@ const statusColor = {
 const statusLabel = {
   idle: '空闲', printing: '打印中', offline: '离线', error: '故障', maintenance: '维护',
 }
+
+function fmtRemaining(min) {
+  // Bambuddy remaining_time 单位是分钟（不是秒）
+  if (min == null || min < 0) return '-'
+  const h = Math.floor(min / 60)
+  const m = Math.round(min % 60)
+  if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
+  return `${m}m`
+}
+function trayColor(c) {
+  return c && c.length >= 6 ? '#' + c.slice(0, 6) : '#ccc'
+}
 </script>
 
 <template>
@@ -64,15 +76,47 @@ const statusLabel = {
           >{{ statusLabel[p.status] || p.status }}</span>
         </div>
 
-        <div class="mt-4 grid grid-cols-2 gap-2 text-sm">
-          <div>
-            <p class="text-xs text-zinc-400">队列</p>
-            <p class="text-zinc-700 dark:text-zinc-300">{{ p.queue_count }}</p>
+        <div class="mt-4 space-y-3 text-sm">
+          <!-- 进度条 -->
+          <div v-if="p.status_detail?.progress != null">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="text-zinc-400">进度 {{ p.status_detail.progress }}%</span>
+              <span class="text-zinc-400">剩余 {{ fmtRemaining(p.status_detail.remaining_time) }}</span>
+            </div>
+            <div class="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+              <div class="h-full bg-indigo-500 transition-all" :style="{ width: Math.min(100, p.status_detail.progress) + '%' }"></div>
+            </div>
           </div>
-          <div v-for="(v, k) in (p.status_detail || {})" :key="k">
-            <p class="text-xs text-zinc-400">{{ k }}</p>
-            <p class="text-zinc-700 dark:text-zinc-300">{{ v }}</p>
+
+          <!-- 当前文件 + 队列 -->
+          <div class="flex items-center justify-between text-xs gap-2">
+            <span class="text-zinc-500 dark:text-zinc-400 truncate">{{ p.status_detail?.current_print || '空闲' }}</span>
+            <span class="text-zinc-400 whitespace-nowrap">队列 {{ p.queue_count ?? 0 }}</span>
           </div>
+
+          <!-- 温度 -->
+          <div v-if="p.status_detail?.temperatures" class="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <span class="text-zinc-400">喷头</span>
+              <span class="text-zinc-700 dark:text-zinc-300 ml-1">{{ p.status_detail.temperatures.nozzle }}°/{{ p.status_detail.temperatures.nozzle_target }}°</span>
+            </div>
+            <div>
+              <span class="text-zinc-400">热床</span>
+              <span class="text-zinc-700 dark:text-zinc-300 ml-1">{{ p.status_detail.temperatures.bed }}°/{{ p.status_detail.temperatures.bed_target }}°</span>
+            </div>
+          </div>
+
+          <!-- AMS 耗材 -->
+          <div v-if="p.status_detail?.ams?.length" class="space-y-1">
+            <p class="text-xs text-zinc-400">AMS 耗材</p>
+            <div v-for="tray in (p.status_detail.ams[0]?.tray || [])" :key="tray.id" class="flex items-center gap-2 text-xs">
+              <span class="w-3 h-3 rounded-full border border-zinc-200 dark:border-zinc-700 shrink-0" :style="{ background: trayColor(tray.tray_color) }"></span>
+              <span class="text-zinc-700 dark:text-zinc-300 truncate">{{ tray.tray_type || '-' }}<span v-if="tray.tray_sub_brands" class="text-zinc-400"> · {{ tray.tray_sub_brands }}</span></span>
+              <span class="text-zinc-400 ml-auto whitespace-nowrap">{{ tray.remain >= 0 ? tray.remain + '%' : '-' }}</span>
+            </div>
+          </div>
+
+          <div v-if="!p.status_detail" class="text-xs text-zinc-400">无实时状态（Poller 未同步）</div>
         </div>
 
         <p class="mt-3 text-xs text-zinc-400">最后同步：{{ p.last_seen_at || '-' }}</p>

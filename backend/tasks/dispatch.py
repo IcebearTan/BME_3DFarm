@@ -58,6 +58,13 @@ def _do_dispatch(order_id, printer_id):
     if not job:
         job = BambuddyJobModel(order_id=order_id, order_no=order.order_no)
         db.session.add(job)
+    elif job.bambuddy_queue_id:
+        # 幂等：已下发过（queue_id 已设）就不重复 add_to_queue，
+        # 否则双击/重试会在 Bambuddy 队列里堆出重复任务，打印机把同一文件打多遍。
+        # 要重新下发须先 cancel_dispatch 清掉 queue_id。
+        return {"status": "already_dispatched",
+                "queue_id": job.bambuddy_queue_id,
+                "archive_id": job.bambuddy_archive_id}
 
     # archive：复用 job.bambuddy_archive_id，否则从 MinIO 拉 → upload
     if job.bambuddy_archive_id:

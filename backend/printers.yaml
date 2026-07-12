@@ -15,7 +15,8 @@
 printers:
   - public_name: P1S-01
     internal_name: ""
-    bambuddy_printer_id: null        # Bambuddy 部署后填它的 printer_id
+    bambuddy_printer_id: 1           # Bambuddy 真机 id（已实测连通）
+    source: real                     # Poller 按 (bambuddy_printer_id, source) 匹配，真机须为 real
     model: P1S
     has_ams: false                   # 现场确认后改 true/false
     enabled: true                    # 当前唯一能调试的机器

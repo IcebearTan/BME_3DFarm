@@ -20,8 +20,15 @@ def make_celery(flask_app):
         flask_app.import_name,
         broker=flask_app.config["CELERY_BROKER_URL"],
         backend=flask_app.config["CELERY_RESULT_BACKEND"],
+        # 显式 include task 模块，否则 worker 进程不会导入它们，@celery.task
+        # 不会注册，beat 触发时报 Received unregistered task。
+        include=["tasks.poller", "tasks.dispatch"],
     )
-    celery.conf.update(flask_app.config)
+    # 不要 celery.conf.update(flask_app.config)：flask config 里的大写
+    # CELERY_BROKER_URL / CELERY_RESULT_BACKEND（旧式 key）会和上面构造器设的
+    # 新式小写 broker_url / result_backend 冲突，celery 5.x 直接 ImproperlyConfigured。
+    # broker/backend 已由构造器设好；task 运行时走 ContextTask 的 Flask 应用上下文，
+    # 用 current_app.config 取业务配置即可。
 
     class ContextTask(celery.Task):
         """让每个 task 执行时进入 Flask 应用上下文（可访问 db / config）。"""

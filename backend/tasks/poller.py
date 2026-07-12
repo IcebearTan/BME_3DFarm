@@ -65,8 +65,8 @@ def _apply_printer_status(order, status):
         return
 
     gcode_state = (status.get("gcode_state") or status.get("state") or "").lower()
-    mc_percent = status.get("mc_percent")
-    mc_remaining = status.get("mc_remaining_time") or status.get("mc_remaining")
+    mc_percent = status.get("mc_percent") or status.get("progress")
+    mc_remaining = status.get("mc_remaining_time") or status.get("mc_remaining") or status.get("remaining_time")
 
     if mc_percent is not None:
         try:
@@ -75,7 +75,8 @@ def _apply_printer_status(order, status):
             pass
     if mc_remaining is not None:
         try:
-            order.remaining_seconds = int(float(mc_remaining))
+            # mc_remaining 来自 Bambuddy remaining_time，单位是分钟；字段名是 seconds → 换算
+            order.remaining_seconds = int(float(mc_remaining) * 60)
         except (ValueError, TypeError):
             pass
 
@@ -153,7 +154,11 @@ def _do_sync_printers():
                 model=p.get("model_name") or p.get("model") or "P1S",
             )
             db.session.add(row)
-        st = p.get("status") if isinstance(p.get("status"), dict) else {}
+        # /printers/ 列表只含元数据、不含实时 status，须单独调 /printers/{id}/status
+        try:
+            st = adapter.get_printer_status(pid) or {}
+        except BambuddyError:
+            st = {}
         row.status = _map_printer_status(st)
         row.status_detail = st or None
         row.last_seen_at = datetime.now()
