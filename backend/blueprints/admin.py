@@ -16,7 +16,8 @@ from flask_jwt_extended import jwt_required
 
 from exts import db
 from models import (
-    PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel, BambuddyJobModel,
+    PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel,
+    BambuddyJobModel, OrderFileModel,
 )
 from services import (
     CreditService,
@@ -486,6 +487,58 @@ def bind_bambuddy(order_id):
     job.mapping_confidence = "manual"
     db.session.commit()
     return jsonify({"code": 200, "message": "已绑定", "data": _job_to_dict(job)})
+
+
+# ─────────── 下发 Bambuddy（Phase 3 半自动调度） ───────────
+@bp.route("/orders/<int:order_id>/dispatch", methods=["POST"])
+@jwt_required()
+@require_admin
+def dispatch_order(order_id):
+    """下发 Bambuddy 打印。body: {bambuddy_printer_id}。
+
+    订单须 READY_TO_PRINT + 有 .gcode.3mf 文件。同步调 _do_dispatch（开发期），
+    生产可改 dispatch_order.apply_async 异步。
+    """
+    order = _get_order(order_id)
+    if not order:
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    if order.status != PrintOrderModel.STATUS_READY_TO_PRINT:
+        return jsonify({"code": 409, "message": "订单必须在 READY_TO_PRINT 才能下发"}), 409
+    data = request.get_json(silent=True) or {}
+    printer_id = data.get("bambuddy_printer_id")
+    if printer_id is None:
+        return jsonify({"code": 400, "message": "bambuddy_printer_id 必填"}), 400
+    sliced = OrderFileModel.query.filter_by(
+        order_id=order_id, file_type=OrderFileModel.FILE_SLICED
+    ).first()
+    if not sliced:
+        return jsonify({"code": 409, "message": "订单无 .gcode.3mf 文件，无法自动下发"}), 409
+
+    from bambuddy_adapter import BambuddyError
+    from tasks.dispatch import _do_dispatch
+    try:
+        result = _do_dispatch(order_id, printer_id)
+    except BambuddyError as e:
+        return jsonify({"code": 502, "message": f"Bambuddy 下发失败: {e}"}), 502
+    code = 200 if result.get("status") == "dispatched" else 409
+    return jsonify({"code": code, "data": result, "message": result.get("status")}), code
+
+
+@bp.route("/orders/<int:order_id>/cancel-dispatch", methods=["POST"])
+@jwt_required()
+@require_admin
+def cancel_dispatch(order_id):
+    """取消 Bambuddy 队列项（remove queue + 清 job.queue_id）。"""
+    if not _get_order(order_id):
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    from bambuddy_adapter import BambuddyError
+    from tasks.dispatch import _do_cancel
+    try:
+        result = _do_cancel(order_id)
+    except BambuddyError as e:
+        return jsonify({"code": 502, "message": f"Bambuddy 取消失败: {e}"}), 502
+    code = 200 if result.get("status") == "cancelled" else 409
+    return jsonify({"code": code, "data": result, "message": result.get("status")}), code
 
 
 # ─────────── 打印机（Phase 2） ───────────

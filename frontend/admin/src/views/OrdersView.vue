@@ -100,6 +100,40 @@ async function doBind() {
   }
 }
 
+// 下发 Bambuddy（Phase 3）
+const dispatchDialog = reactive({ open: false, order: null, printer_id: '' })
+const dispatching = ref(false)
+function openDispatch(o) {
+  dispatchDialog.order = o
+  dispatchDialog.printer_id = ''
+  dispatchDialog.open = true
+}
+async function doDispatch() {
+  if (!dispatchDialog.printer_id) {
+    toast.error('请填 printer_id')
+    return
+  }
+  dispatching.value = true
+  try {
+    const res = await adminApi.dispatchOrder(
+      dispatchDialog.order.id,
+      Number(dispatchDialog.printer_id)
+    )
+    if (res.code === 200) {
+      toast.success('已下发 Bambuddy（upload + queue）')
+      dispatchDialog.open = false
+      await load()
+      await refreshDetail()
+    } else {
+      toast.error(res.message || '下发失败')
+    }
+  } catch (e) {
+    toast.error(e.response?.data?.message || '失败')
+  } finally {
+    dispatching.value = false
+  }
+}
+
 async function simpleAction(o, label, fn) {
   acting.value = true
   try {
@@ -262,9 +296,13 @@ onMounted(load)
                     @click="approve(o)"
                   >审核</AppButton>
                   <AppButton
-                    v-if="o.status === 'READY_TO_PRINT'" variant="primary" size="xs" :loading="acting"
+                    v-if="o.status === 'READY_TO_PRINT'" variant="primary" size="xs"
+                    @click="openDispatch(o)"
+                  >下发</AppButton>
+                  <AppButton
+                    v-if="o.status === 'READY_TO_PRINT'" variant="ghost" size="xs" :loading="acting"
                     @click="start(o)"
-                  >开始</AppButton>
+                  >手动开始</AppButton>
                   <AppButton v-if="o.status === 'PRINTING'" variant="success" size="xs" @click="openComplete(o)">完成</AppButton>
                   <AppButton
                     v-if="o.status === 'PRINTING'" variant="warning" size="xs" :loading="acting"
@@ -392,6 +430,39 @@ onMounted(load)
               <div class="flex justify-end gap-2 mt-5">
                 <AppButton variant="ghost" @click="amountDialog.open = false">取消</AppButton>
                 <AppButton :loading="acting" @click="submitAmount">确认</AppButton>
+              </div>
+            </DialogPanel>
+          </TransitionChild>
+        </div>
+      </Dialog>
+    </TransitionRoot>
+
+    <!-- 下发 Bambuddy Dialog（Phase 3） -->
+    <TransitionRoot appear :show="dispatchDialog.open" as="template">
+      <Dialog as="div" class="relative z-50" @close="dispatchDialog.open = false">
+        <TransitionChild
+          enter="duration-200" enter-from="opacity-0" enter-to="opacity-100"
+          leave="duration-150" leave-from="opacity-100" leave-to="opacity-0"
+        >
+          <div class="fixed inset-0 bg-black/30 backdrop-blur-sm" />
+        </TransitionChild>
+        <div class="fixed inset-0 flex items-center justify-center p-4">
+          <TransitionChild
+            enter="duration-200" enter-from="opacity-0 scale-95" enter-to="opacity-100 scale-100"
+            leave="duration-150" leave-from="opacity-100 scale-100" leave-to="opacity-0 scale-95"
+          >
+            <DialogPanel
+              class="w-full max-w-sm rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 shadow-xl p-6"
+            >
+              <DialogTitle class="text-lg font-semibold mb-1">下发 Bambuddy 打印</DialogTitle>
+              <p class="text-xs text-zinc-400 mb-4">系统自动上传文件到 archive + 加入打印队列</p>
+              <AppInput
+                v-model="dispatchDialog.printer_id" type="number" label="Bambuddy printer_id"
+                placeholder="打印机 ID" required
+              />
+              <div class="flex justify-end gap-2 mt-5">
+                <AppButton variant="ghost" @click="dispatchDialog.open = false">取消</AppButton>
+                <AppButton :loading="dispatching" @click="doDispatch">下发</AppButton>
               </div>
             </DialogPanel>
           </TransitionChild>

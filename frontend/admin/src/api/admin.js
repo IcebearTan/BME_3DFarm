@@ -31,4 +31,9 @@ export const adminApi = {
   // Bambuddy 任务绑定（Phase 2）
   getBambuddyJob: (id) => service.get(`/admin/orders/${id}/bambuddy-job`),
   bindBambuddy: (id, data) => service.post(`/admin/orders/${id}/bind-bambuddy`, data),
+
+  // 下发 Bambuddy（Phase 3 半自动调度）
+  dispatchOrder: (id, printerId) =>
+    service.post(`/admin/orders/${id}/dispatch`, { bambuddy_printer_id: printerId }),
+  cancelDispatch: (id) => service.post(`/admin/orders/${id}/cancel-dispatch`),
 }

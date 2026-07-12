@@ -76,3 +76,34 @@ class BambuddyAdapter:
     def get_printer_jobs(self, printer_id):
         """打印机当前/历史任务（路径以 Bambuddy 实测为准，先试 /printers/{id}/jobs）。"""
         return self._request("GET", f"/printers/{printer_id}/jobs")
+
+    # ── 写入档（Phase 3，路径/字段以 Bambuddy 实测为准）──
+    def upload_archive(self, file_bytes, filename, content_type):
+        """上传文件到 Bambuddy archive（multipart）。返回 {id/archive_id/uid: ...}。
+
+        本轮假设 POST /archives/；部署后对照 Bambuddy API Browser 调路径 + 返回字段。
+        """
+        url = f"{self.base_url}/archives/"
+        files = {"file": (filename, file_bytes, content_type)}
+        try:
+            resp = httpx.post(
+                url, headers=self._headers(), files=files, timeout=self.timeout
+            )
+        except httpx.HTTPError as e:
+            raise BambuddyError(f"upload_archive 请求失败: {e}") from e
+        if resp.status_code >= 400:
+            raise BambuddyError(
+                f"upload_archive -> {resp.status_code}: {resp.text}"
+            )
+        return resp.json() if resp.content else {}
+
+    def add_to_queue(self, archive_id, printer_id, plate=1):
+        """加入 Bambuddy 打印队列。返回 {id/queue_id/uid: ...}。"""
+        return self._request(
+            "POST", "/queue/",
+            json={"archive_id": archive_id, "printer_id": printer_id, "plate": plate},
+        )
+
+    def remove_queue_item(self, queue_id):
+        """从 Bambuddy 队列移除。"""
+        return self._request("DELETE", f"/queue/{queue_id}")
