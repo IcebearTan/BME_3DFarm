@@ -15,7 +15,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 
 from exts import db
-from models import PrintOrderModel, UserModel
+from models import PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel
 from services import (
     CreditService,
     OrderStateMachine,
@@ -330,6 +330,96 @@ def grant_credit():
         "message": "发放成功" if not result["replayed"] else "已发放（幂等重放）",
         "data": result,
     })
+
+
+# ─────────── 用户搜索（发 credit 选用户用，Phase 1.5） ───────────
+@bp.route("/users", methods=["GET"])
+@jwt_required()
+@require_admin
+def list_users():
+    """搜索用户（email/username 模糊，limit 20）。返回 id/email/username/role + 余额。"""
+    q = (request.args.get("q") or "").strip()
+    query = UserModel.query
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            db.or_(UserModel.email.ilike(like), UserModel.username.ilike(like))
+        )
+    users = query.order_by(UserModel.id.desc()).limit(20).all()
+    items = []
+    for u in users:
+        acct = CreditAccountModel.query.filter_by(user_id=u.id).first()
+        items.append({
+            "id": u.id, "email": u.email, "username": u.username, "role": u.role,
+            "available": str(acct.available_credit) if acct else "0.00",
+            "frozen": str(acct.frozen_credit) if acct else "0.00",
+        })
+    return jsonify({"code": 200, "data": {"items": items, "total": len(items)}})
+
+
+# ─────────── 费率配置（自动报价，Phase 1.5） ───────────
+def _pricing_to_dict(p):
+    return {
+        "id": p.id, "key": p.key, "value": str(p.value),
+        "category": p.category, "label": p.label, "unit": p.unit,
+    }
+
+
+@bp.route("/pricing", methods=["GET"])
+@jwt_required()
+@require_admin
+def list_pricing():
+    items = PricingConfigModel.query.order_by(
+        PricingConfigModel.category, PricingConfigModel.id
+    ).all()
+    return jsonify(
+        {"code": 200, "data": {"items": [_pricing_to_dict(p) for p in items]}}
+    )
+
+
+@bp.route("/pricing", methods=["POST"])
+@jwt_required()
+@require_admin
+def add_pricing():
+    """加新材料费率。body: {key, value, label?, unit?}，key 形如 material:NYLON。"""
+    data = request.get_json(silent=True) or {}
+    key = (data.get("key") or "").strip()
+    value = data.get("value")
+    if not key or value is None:
+        return jsonify({"code": 400, "message": "key/value 必填"}), 400
+    if PricingConfigModel.query.filter_by(key=key).first():
+        return jsonify({"code": 409, "message": f"key {key} 已存在"}), 409
+    try:
+        val = Decimal(str(value))
+    except InvalidOperation:
+        return jsonify({"code": 400, "message": "value 必须为数字"}), 400
+    p = PricingConfigModel(
+        key=key, value=val, category=PricingConfigModel.CAT_MATERIAL,
+        label=data.get("label") or key.split(":")[-1], unit=data.get("unit") or "g",
+    )
+    db.session.add(p)
+    db.session.commit()
+    return jsonify({"code": 200, "message": "已添加", "data": _pricing_to_dict(p)})
+
+
+@bp.route("/pricing/<int:pid>", methods=["PUT"])
+@jwt_required()
+@require_admin
+def update_pricing(pid):
+    """改单项 value（也可改 label）。body: {value?, label?}。"""
+    p = db.session.get(PricingConfigModel, pid)
+    if not p:
+        return jsonify({"code": 404, "message": "配置不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    if data.get("value") is not None:
+        try:
+            p.value = Decimal(str(data["value"]))
+        except InvalidOperation:
+            return jsonify({"code": 400, "message": "value 必须为数字"}), 400
+    if data.get("label") is not None:
+        p.label = data["label"]
+    db.session.commit()
+    return jsonify({"code": 200, "message": "已更新", "data": _pricing_to_dict(p)})
 
 
 # ─────────── 打印机（Phase 2） ───────────

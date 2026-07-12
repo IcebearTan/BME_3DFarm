@@ -20,6 +20,12 @@ const routes = [
     component: () => import('@/views/CreditGrantView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/pricing',
+    name: 'pricing',
+    component: () => import('@/views/PricingView.vue'),
+    meta: { requiresAuth: true },
+  },
 ]
 
 const router = createRouter({

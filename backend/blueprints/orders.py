@@ -22,6 +22,8 @@ from services import (
     InvalidTransitionError,
 )
 from services.storage import storage
+from services.gcode_parser import parse_gcode_3mf
+from services.pricing import PricingService
 from . import _current_user
 
 bp = Blueprint("orders", __name__, url_prefix="/orders")
@@ -121,16 +123,35 @@ def create_order():
             "is_sliced": filename.endswith(".gcode.3mf"),
         }
 
+    # .gcode.3mf 自动报价：解析 gcode 拿克重/时长 → PricingService 算 credit
+    estimated_credit = None
+    estimate_weight = None
+    estimate_seconds = None
+    if file_meta and file_meta.get("is_sliced"):
+        parsed = parse_gcode_3mf(file_meta["tmp_path"])
+        if parsed:
+            estimate_weight = parsed.get("filament_used_g")
+            estimate_seconds = parsed.get("print_time_s")
+            if estimate_weight is not None or estimate_seconds is not None:
+                estimated_credit = PricingService.calc(
+                    estimate_weight or 0, estimate_seconds or 0, material
+                )
+
     # 建 order（commit 拿 id，用于 storage key）
     order_no = f"PO{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
+    status = (PrintOrderModel.STATUS_WAITING_CONFIRM if estimated_credit is not None
+              else PrintOrderModel.STATUS_QUOTING)
     order = PrintOrderModel(
         order_no=order_no,
         user_id=user.id,
-        status=PrintOrderModel.STATUS_QUOTING,
-        public_status=OrderStateMachine.public_status_of(PrintOrderModel.STATUS_QUOTING),
+        status=status,
+        public_status=OrderStateMachine.public_status_of(status),
         material=material, color=color, quantity=quantity,
         layer_height=layer_height, nozzle_size=nozzle_size,
         customer_note=customer_note,
+        estimated_credit=estimated_credit,
+        estimate_weight_g=estimate_weight,
+        estimate_print_seconds=int(estimate_seconds) if estimate_seconds is not None else None,
     )
     db.session.add(order)
     db.session.commit()
@@ -161,7 +182,10 @@ def create_order():
                 except OSError:
                     pass
 
-    return jsonify({"code": 200, "message": "订单已创建，等待报价",
+    msg = (f"订单已创建，自动报价 {estimated_credit} credit，待确认"
+           if estimated_credit is not None
+           else "订单已创建，等待管理员报价")
+    return jsonify({"code": 200, "message": msg,
                     "data": _order_to_dict(order)}), 200
 
 

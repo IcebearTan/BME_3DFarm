@@ -22,6 +22,7 @@ from models import (
     OrderFileModel,
     PrintEventModel,
     BambuddyJobModel,
+    PricingConfigModel,
 )
 from services import CreditService
 from services.storage import storage
@@ -29,6 +30,15 @@ from flask_jwt_extended import JWTManager
 from blueprints import (
     auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp,
 )
+
+# 费率默认种子（与 seed_pricing.py 一致；每个测试前重置，PricingService 依赖）
+_PRICING_DEFAULTS = [
+    ("base_fee", 2, "global", "基础开机费", "次"),
+    ("machine_hour_price", 10, "global", "机时单价", "hour"),
+    ("material:PLA", 0.5, "material", "PLA", "g"),
+    ("material:PETG", 0.6, "material", "PETG", "g"),
+    ("material:ABS", 0.7, "material", "ABS", "g"),
+]
 
 
 @pytest.fixture(scope="session")
@@ -68,6 +78,11 @@ def _clean_tables(app):
         db.session.query(OrderFileModel).delete()
         db.session.query(PrintOrderModel).delete()
         db.session.query(UserModel).delete()
+        # pricing_config：清后重置默认费率（PricingService.calc 依赖）
+        db.session.query(PricingConfigModel).delete()
+        for key, value, cat, label, unit in _PRICING_DEFAULTS:
+            db.session.add(PricingConfigModel(
+                key=key, value=value, category=cat, label=label, unit=unit))
         db.session.commit()
     yield
 

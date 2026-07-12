@@ -263,3 +263,25 @@ class AuditLog(db.Model):
     operation_data = db.Column(db.Text, nullable=True)
     result = db.Column(db.String(20), nullable=True)  # 成功/失败
     timestamp = db.Column(db.DateTime, default=datetime.now, index=True)
+
+
+# ─────────────────────── 费率配置（Phase 1.5 自动报价） ───────────────────────
+class PricingConfigModel(db.Model):
+    """key-value 费率配置。
+
+    category=global：base_fee（基础开机费）/ machine_hour_price（机时单价）
+    category=material：material:<NAME> 材料每克单价（受 Bambuddy cost_per_kg 启发）
+    单位（unit）仅显示用：g / hour / 次
+    """
+    __tablename__ = "pricing_config"
+
+    CAT_GLOBAL = "global"
+    CAT_MATERIAL = "material"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    key = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    value = db.Column(db.Numeric(12, 2), nullable=False)
+    category = db.Column(db.String(20), nullable=False, default=CAT_GLOBAL)
+    label = db.Column(db.String(100), nullable=True)
+    unit = db.Column(db.String(20), nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)

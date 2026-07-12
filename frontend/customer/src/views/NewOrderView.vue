@@ -41,7 +41,7 @@ async function submit() {
 
     const res = await ordersApi.create(fd)
     if (res.code === 200) {
-      toast.success('订单已创建，等待报价')
+      toast.success(res.message || '订单已创建')
       router.push({ name: 'orders' })
     } else {
       toast.error(res.message || '创建失败')

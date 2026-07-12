@@ -19,4 +19,12 @@ export const adminApi = {
 
   // 发 credit
   grantCredit: (data) => service.post('/admin/credit/grant', data),
+
+  // 用户搜索（发 credit 选用户，Phase 1.5）
+  users: (q) => service.get('/admin/users', { params: { q } }),
+
+  // 费率配置（自动报价，Phase 1.5）
+  getPricing: () => service.get('/admin/pricing'),
+  addPricing: (data) => service.post('/admin/pricing', data),
+  updatePricing: (id, data) => service.put(`/admin/pricing/${id}`, data),
 }
