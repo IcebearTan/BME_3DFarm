@@ -217,19 +217,20 @@ def complete_order(order_id):
         return jsonify({"code": 404, "message": "订单不存在"}), 404
     data = request.get_json(silent=True) or {}
     frozen = order.frozen_credit
-    if not frozen or frozen <= 0:
-        return jsonify({"code": 409, "message": "订单无冻结额度，无法实扣"}), 409
     actual = _to_dec(data.get("actual_credit"))  # None 或 Decimal
 
     try:
-        CreditService.capture(order.user_id, order.id, frozen,
-                              actual_credit=actual, _commit=False)
+        if frozen and frozen > 0:
+            # 计费路径：capture 实扣（多退少补）
+            CreditService.capture(order.user_id, order.id, frozen,
+                                  actual_credit=actual, _commit=False)
+            order.actual_credit = actual if actual is not None else frozen
+            order.frozen_credit = 0
+        # else: 免计费路径（gcode.3mf 自动报价直进队列，未冻额度）→ 只转状态不实扣
         OrderStateMachine.transition(
             order, S.STATUS_PRINT_COMPLETED, actor_id=admin.id,
             note="打印完成", _commit=False,
         )
-        order.actual_credit = actual if actual is not None else frozen
-        order.frozen_credit = 0
         db.session.commit()
     except InsufficientCreditError as e:
         db.session.rollback()
@@ -237,7 +238,7 @@ def complete_order(order_id):
     except InvalidTransitionError as e:
         db.session.rollback()
         return jsonify({"code": 409, "message": str(e)}), 409
-    return jsonify({"code": 200, "message": "已完成实扣",
+    return jsonify({"code": 200, "message": "已完成",
                     "data": _admin_order_to_dict(order)})
 
 

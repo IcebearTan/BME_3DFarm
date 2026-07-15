@@ -80,7 +80,7 @@ def create_order():
     """创建订单。multipart：表单参数 + 可选 file。
 
     gcode 是唯一真相：material 不再手填。
-      .gcode.3mf → 解析取主材料 → 自动报价 → WAITING_CONFIRM（存 parsed_filaments/nozzles）
+      .gcode.3mf → 解析取主材料 → 自动报价 → READY_TO_PRINT（直接进队列，admin 可下发；免计费不冻 credit）
       .3mf       → 不解析 → QUOTING + is_manual_slice_path=True（等 admin 切片）
       解析失败   → 降级 QUOTING（人工报价），不阻塞下单
     表单：quantity/customer_note（color/layer_height/nozzle_size 可选，保留兼容）
@@ -160,7 +160,10 @@ def create_order():
 
     # 建 order（commit 拿 id，用于 storage key）
     order_no = f"PO{datetime.now().strftime('%Y%m%d%H%M%S')}{uuid.uuid4().hex[:6].upper()}"
-    status = (PrintOrderModel.STATUS_WAITING_CONFIRM if estimated_credit is not None
+    # 自动报价成功（gcode.3mf 解析出价）→ 直接 READY_TO_PRINT，admin 可立即下发；
+    # 免计费路径（内部农场，新用户 0 额度），不冻 credit。
+    # 解析失败 / .3mf 模型 → 仍 QUOTING（人工报价 + 客户确认流程）。
+    status = (PrintOrderModel.STATUS_READY_TO_PRINT if estimated_credit is not None
               else PrintOrderModel.STATUS_QUOTING)
     order = PrintOrderModel(
         order_no=order_no,
@@ -220,7 +223,7 @@ def create_order():
                     pass
 
     if estimated_credit is not None:
-        msg = f"订单已创建，自动报价 {estimated_credit} credit，待确认"
+        msg = f"订单已创建，自动报价 {estimated_credit} credit，已进入打印队列"
     elif is_manual_slice_path:
         msg = "订单已创建，需管理员切片后报价"
     else:
