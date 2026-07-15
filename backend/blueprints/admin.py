@@ -811,17 +811,29 @@ def upload_sliced(order_id):
 @jwt_required()
 @require_admin
 def list_printers():
-    """打印机状态总览（全量：含 status_detail 温度/进度，Poller 每 30s 同步）。"""
+    """打印机状态总览（含 status_detail 温度/进度；附每台当前活跃任务的 order，
+    供监控页在"正在打印"时展示该订单缩略图）。"""
     printers = PrinterModel.query.order_by(PrinterModel.id).all()
-    items = [
-        {
+    # 每台打印机当前活跃任务（completed_at 为空；按 started_at desc 取最近开始打印的一条，
+    # started_at 为空则用 dispatched_at desc 兜底）→ 用 order_id 反查缩略图。
+    active_job_by_printer = {}
+    for j in (BambuddyJobModel.query
+              .filter(BambuddyJobModel.completed_at.is_(None))
+              .filter(BambuddyJobModel.bambuddy_printer_id.isnot(None))
+              .order_by(BambuddyJobModel.started_at.desc(),
+                        BambuddyJobModel.dispatched_at.desc())):
+        active_job_by_printer.setdefault(j.bambuddy_printer_id, j)
+    items = []
+    for p in printers:
+        job = active_job_by_printer.get(p.bambuddy_printer_id)
+        items.append({
             "id": p.id, "public_name": p.public_name, "internal_name": p.internal_name,
             "bambuddy_printer_id": p.bambuddy_printer_id, "model": p.model,
             "has_ams": p.has_ams, "status": p.status, "source": p.source,
             "status_detail": p.status_detail, "queue_count": p.queue_count,
             "last_seen_at": p.last_seen_at.isoformat() if p.last_seen_at else None,
             "enabled": p.enabled,
-        }
-        for p in printers
-    ]
+            "current_order_id": job.order_id if job else None,
+            "current_order_no": job.order_no if job else None,
+        })
     return jsonify({"code": 200, "data": {"items": items}})

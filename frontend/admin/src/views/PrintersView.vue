@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import AppButton from '@/components/AppButton.vue'
+import PreviewImage from '@/components/PreviewImage.vue'
 import { adminApi } from '@/api/admin'
 
 const printers = ref([])
@@ -74,6 +75,12 @@ function trayColor(c) {
             :class="['px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap',
                      statusColor[p.status] || statusColor.offline]"
           >{{ statusLabel[p.status] || p.status }}</span>
+        </div>
+
+        <!-- 正在打印：显示当前打印订单的缩略图 -->
+        <div v-if="p.status === 'printing' && p.current_order_id" class="mt-3 max-w-[180px]">
+          <PreviewImage :loader="() => adminApi.orderPreview(p.current_order_id)" />
+          <p class="mt-1 text-xs text-zinc-400 truncate">{{ p.current_order_no }}</p>
         </div>
 
         <div class="mt-4 space-y-3 text-sm">
