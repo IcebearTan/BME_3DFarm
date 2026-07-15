@@ -4,22 +4,84 @@
 RBAC 简化为 require_admin（无细粒度 ACL 表）。未来需要模块级权限时，
 可参考 BME 的 Permission + UserPermission 表 + check_permission 装饰器扩展。
 """
+import json
+import secrets
+import urllib.request
 from datetime import datetime
 from functools import wraps
 
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity
+from sqlalchemy.exc import IntegrityError
 
 from exts import db
 from models import UserModel, AuditLog
+from services import CreditService
 
 
 def _current_user():
-    """从 JWT 取当前用户，无则返回 None。"""
+    """从 JWT 取当前用户；本地无该 email 则自动建 customer（方案 A：无条件接纳 BME 账号）。
+
+    BME 是唯一 IdP：token 只由 BME login 签发（identity=email），3dfarm 只验不签。
+    本地无该 email 时自动建号，并与 register 对齐地建空 credit 账户、best-effort 回填
+    username。admin 由库内 role 提升，不在此自动给——fresh customer 撞 admin 端点会被
+    require_admin 挡 403。
+    """
     email = get_jwt_identity()
     if not email:
         return None
-    return UserModel.query.filter_by(email=email).first()
+    user = UserModel.query.filter_by(email=email).first()
+    if user is not None:
+        return user
+
+    # 首次接入：自动建 customer。username/password 均 NOT NULL——username 先用 email
+    # 本地部分占位（随后 best-effort 回填真实名），密码随机不可登录（SSO 用户只能经 BME 登）。
+    user = UserModel(
+        email=email,
+        username=email.split("@", 1)[0] or email,
+        role="customer",
+        sso_subject="bme",
+    )
+    user.set_password(secrets.token_urlsafe(32))
+    db.session.add(user)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # 并发同 email 首次接入兜底（仿 CreditService.ensure_account）：回滚后重查命中即返回
+        db.session.rollback()
+        return UserModel.query.filter_by(email=email).first()
+
+    # 建号即建空 credit 账户（与 register 对齐：订单操作前账户必然存在）
+    CreditService.ensure_account(user.id)
+    _enrich_username_from_bme(user)
+    return user
+
+
+def _enrich_username_from_bme(user):
+    """best-effort：拿当前请求的 Bearer token 回 BME /user/user_index 取真实用户名回填。
+
+    仅在首次建号时调用一次。超时/失败/非 200 一律静默，保留占位 username，不影响主流程。
+    """
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.split("Bearer ", 1)[1].strip() if auth_header.startswith("Bearer ") else ""
+    if not token:
+        return
+    url = current_app.config["BME_BASE_URL"].rstrip("/") + "/user/user_index"
+    req = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status != 200:
+                return
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        user_name = (data.get("User_Name") or "").strip()
+        if user_name and user_name != user.username:
+            user.username = user_name
+            db.session.commit()
+    except Exception:
+        # 回填是锦上添花，任何异常都不影响主流程
+        db.session.rollback()
 
 
 def require_admin(func):

@@ -28,6 +28,9 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET", "change-me-in-prod")
 JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=7)
 
+# ── BME 后端（同机 flask_Zero :5000；SSO 首次建号时 best-effort 回填 username）──
+BME_BASE_URL = os.getenv("BME_BASE_URL", "http://127.0.0.1:5000")
+
 # ── 邮箱（订单状态通知）──
 MAIL_SERVER = os.getenv("EMAIL_SERVER")
 MAIL_USE_SSL = True
