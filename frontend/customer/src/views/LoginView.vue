@@ -47,7 +47,7 @@ async function submit() {
         username: res.User_Name || form.username || form.email,
       })
       toast.success(mode.value === 'login' ? '登录成功' : '注册成功')
-      router.push(route.query.redirect || { name: 'dashboard' })
+      router.push(route.query.redirect || { name: 'home' })
     } else {
       toast.error(res.message || '操作失败')
     }

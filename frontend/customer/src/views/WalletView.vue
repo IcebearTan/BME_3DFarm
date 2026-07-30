@@ -4,6 +4,7 @@ import { Wallet, Snowflake, Layers, ArrowDownRight, ArrowUpRight } from 'lucide-
 import AppCard from '@/components/AppCard.vue'
 import { creditApi } from '@/api/credit'
 
+// 原 Dashboard 内容（额度余额 + 流水），从首页迁到这里，入口在头像 popover。
 const balance = ref({ available: '0', frozen: '0', total: '0' })
 const txns = ref([])
 const loading = ref(false)
@@ -41,7 +42,7 @@ onMounted(load)
 <template>
   <div class="space-y-6">
     <div>
-      <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">我的额度</h1>
+      <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">额度流水</h1>
       <p class="text-sm text-zinc-400 mt-1">用 credit 下单打印</p>
     </div>
 

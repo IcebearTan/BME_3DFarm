@@ -10,8 +10,14 @@ const routes = [
   },
   {
     path: '/',
-    name: 'dashboard',
-    component: () => import('@/views/DashboardView.vue'),
+    name: 'home',
+    component: () => import('@/views/HomeView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/wallet',
+    name: 'wallet',
+    component: () => import('@/views/WalletView.vue'),
     meta: { requiresAuth: true },
   },
   {
@@ -46,7 +52,7 @@ router.beforeEach((to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (auth.isLogin && to.meta.authPage) {
-    return { name: 'dashboard' }
+    return { name: 'home' }
   }
 })
 

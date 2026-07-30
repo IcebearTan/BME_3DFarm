@@ -11,7 +11,8 @@ const emit = defineEmits(['update:modelValue'])
 const dragging = ref(false)
 const inputRef = ref(null)
 
-const ALLOWED = ['.3mf', '.gcode.3mf']
+// 暂只收 .gcode.3mf（其它类型暂不开放）
+const ALLOWED = ['.gcode.3mf']
 const MAX = 200 * 1024 * 1024
 
 function pick() {
@@ -29,7 +30,7 @@ function onChange(e) {
 function setFile(f) {
   const name = f.name.toLowerCase()
   if (!ALLOWED.some((ext) => name.endsWith(ext))) {
-    toast.error('仅支持 .3mf 或 .gcode.3mf 文件')
+    toast.error('仅支持 .gcode.3mf 文件')
     return
   }
   if (f.size > MAX) {
@@ -66,9 +67,9 @@ function fmtSize(b) {
     >
       <UploadCloud class="w-8 h-8 mx-auto text-zinc-400" />
       <p class="mt-3 text-sm text-zinc-600 dark:text-zinc-400">点击或拖拽文件到此处</p>
-      <p class="mt-1 text-xs text-zinc-400">支持 .3mf / .gcode.3mf，最大 200MB</p>
+      <p class="mt-1 text-xs text-zinc-400">支持 .gcode.3mf，最大 200MB</p>
       <input
-        ref="inputRef" type="file" accept=".3mf,.gcode.3mf" class="hidden"
+        ref="inputRef" type="file" accept=".gcode.3mf" class="hidden"
         @change="onChange"
       />
     </div>

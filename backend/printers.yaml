@@ -1,65 +1,24 @@
 # ============================================================
 # BME_3DFarm 打印机清单（业务侧）
 # ------------------------------------------------------------
-# 用法：
-#   1. 先在 Bambuddy 里加好打印机（Bambuddy 自己存 IP/序列号/Access Code，
-#      这些连接信息不写在本文件，也不进 BME_3DFarm 数据库）。
-#   2. Bambuddy 会给每台打印机分配一个 printer_id，把它填到下面的
-#      bambuddy_printer_id。
-#   3. 现场确认每台是否加装 AMS，填 has_ams（true/false）。
-#   4. 跑  python scripts/sync_printers.py  同步到数据库（按 public_name upsert）。
+# 本地测试环境：只配一台 Bambuddy 虚拟打印机 VP-P1S-01
+# （对应 Bambuddy 容器里 virtual_printers.id=1）。
 #
-# enabled=false 的机器只占位，不参与调度；启用时改成 true 再 sync。
-# capabilities 留空对象即可，以后需要再填尺寸/喷嘴/材料等。
+# 真机上线时：先在 Bambuddy 加好真机，把它分到的 printer_id 填到下面
+# 新条目的 bambuddy_printer_id（source 改 real），现场确认 has_ams，再跑 sync。
+#
+# 用法：改完跑  python scripts/sync_printers.py  按 public_name upsert。
+# 注意：
+#   - sync_printers.py 只 upsert 不清理；从 yaml 删条目后需手动从 printer 表删旧行。
+#   - Virtual Printer 同时会被 Celery poller 从 Bambuddy /virtual-printers 自动同步
+#     （按 bambuddy_printer_id + source 匹配），不写在这里也会出现；
+#     写在这里是为了显式声明 has_ams / enabled 等业务字段，作为单一真相源。
 # ============================================================
 printers:
-  - public_name: P1S-01
-    internal_name: ""
-    bambuddy_printer_id: 1           # Bambuddy 真机 id（已实测连通）
-    source: real                     # Poller 按 (bambuddy_printer_id, source) 匹配，真机须为 real
+  - public_name: VP-P1S-01
+    bambuddy_printer_id: 1           # Bambuddy virtual_printers.id（本地虚拟机）
+    source: virtual                  # poller 按 (bambuddy_printer_id, source) 匹配
     model: P1S
-    has_ams: false                   # 现场确认后改 true/false
-    enabled: true                    # 当前唯一能调试的机器
-    capabilities: {}
-
-  - public_name: P1S-02
-    bambuddy_printer_id: null
-    model: P1S
-    has_ams: false
-    enabled: false
-    capabilities: {}
-
-  - public_name: P1S-03
-    bambuddy_printer_id: null
-    model: P1S
-    has_ams: false
-    enabled: false
-    capabilities: {}
-
-  - public_name: P1S-04
-    bambuddy_printer_id: null
-    model: P1S
-    has_ams: false
-    enabled: false
-    capabilities: {}
-
-  - public_name: P1S-05
-    bambuddy_printer_id: null
-    model: P1S
-    has_ams: false
-    enabled: false
-    capabilities: {}
-
-  - public_name: P1S-06
-    bambuddy_printer_id: null
-    model: P1S
-    has_ams: false
-    enabled: false
-    capabilities: {}
-
-  - public_name: P1S-07
-    bambuddy_printer_id: null
-    model: P1S
-    has_ams: false
-    enabled: false
+    has_ams: false                   # 虚拟机无 AMS
+    enabled: true
     capabilities: {}

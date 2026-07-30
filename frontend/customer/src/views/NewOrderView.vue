@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppInput from '@/components/AppInput.vue'
 import AppButton from '@/components/AppButton.vue'
@@ -8,48 +8,50 @@ import FileDrop from '@/components/FileDrop.vue'
 import { ordersApi } from '@/api/orders'
 import { useForm } from '@/composables/useForm'
 import { toast } from '@/composables/useToast'
+import { useOrderDraftStore } from '@/stores/orderDraft'
 
 const router = useRouter()
+const draft = useOrderDraftStore()
+
 // gcode 是唯一真相：不再手填 material/color/layer/nozzle，只留数量 + 备注
 const form = reactive({ quantity: 1, customer_note: '' })
 const file = ref(null)
 const loading = ref(false)
 
-// 文件预览状态（.gcode.3mf 路径）
+// 首页上传框带过来的文件，挂载时取走（赋给 file 触发下方 watch 自动解析）
+onMounted(() => {
+  const pending = draft.take()
+  if (pending) file.value = pending
+})
+
+// 文件预览状态（.gcode.3mf 自动报价）
 const previewing = ref(false)
 const preview = ref(null)       // preview 接口返回：filaments/material/quote/...
 const parseError = ref('')
-const isManualSlice = ref(false) // .3mf 路径：需 admin 切片
 
 const { errors, validate } = useForm(form, {
   quantity: [(v) => Number(v) >= 1 || '至少 1 件'],
 })
 
-// 选文件后按扩展名分支
+// 选文件后解析 gcode（暂只支持 .gcode.3mf，无需按扩展名分支）
 watch(file, async (nv) => {
   preview.value = null
   parseError.value = ''
-  isManualSlice.value = false
   if (!nv) return
-  const name = nv.name.toLowerCase()
-  if (name.endsWith('.gcode.3mf')) {
-    previewing.value = true
-    try {
-      const fd = new FormData()
-      fd.append('file', nv.file, nv.name)
-      const res = await ordersApi.preview(fd)
-      if (res.code === 200) {
-        preview.value = res.data
-      } else {
-        parseError.value = res.message || '解析失败'
-      }
-    } catch (e) {
-      parseError.value = e.response?.data?.message || '无法解析该 gcode 文件'
-    } finally {
-      previewing.value = false
+  previewing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', nv.file, nv.name)
+    const res = await ordersApi.preview(fd)
+    if (res.code === 200) {
+      preview.value = res.data
+    } else {
+      parseError.value = res.message || '解析失败'
     }
-  } else if (name.endsWith('.3mf')) {
-    isManualSlice.value = true
+  } catch (e) {
+    parseError.value = e.response?.data?.message || '无法解析该 gcode 文件'
+  } finally {
+    previewing.value = false
   }
 })
 
@@ -122,9 +124,7 @@ async function submit() {
         <div>
           <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">模型文件</label>
           <FileDrop v-model="file" />
-          <p class="mt-1.5 text-xs text-zinc-400">
-            .gcode.3mf 自动报价；.3mf 需管理员切片后报价
-          </p>
+          <p class="mt-1.5 text-xs text-zinc-400">.gcode.3mf 自动报价</p>
         </div>
 
         <!-- 解析中 -->
@@ -136,11 +136,6 @@ async function submit() {
         <!-- 解析失败 -->
         <div v-if="parseError" class="text-sm text-rose-500 bg-rose-50 dark:bg-rose-950/40 rounded-lg px-3 py-2">
           {{ parseError }}（仍可提交，将进入人工报价）
-        </div>
-
-        <!-- .3mf 待切片提示 -->
-        <div v-if="isManualSlice" class="text-sm text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
-          这是未切片的 .3mf 模型，提交后进入「待切片」状态，管理员切片后会自动报价。
         </div>
 
         <!-- gcode 预览卡 -->
