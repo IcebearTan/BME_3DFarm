@@ -116,7 +116,7 @@ defineExpose({ load })
                 </div>
                 <span class="text-[10px] tabular-nums shrink-0"
                       :class="t.remain != null && t.remain < 20 ? 'text-amber-500' : 'text-zinc-400'">
-                  {{ t.remain_g != null ? Math.round(t.remain_g) + 'g' : '—' }}
+                  {{ t.remain != null ? Math.round(t.remain) + '%' : '—' }}
                 </span>
               </div>
 

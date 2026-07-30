@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import {
   Dialog, DialogPanel, DialogTitle,
   TransitionRoot, TransitionChild,
@@ -9,6 +9,9 @@ import AppInput from '@/components/AppInput.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import AppCard from '@/components/AppCard.vue'
 import PreviewImage from '@/components/PreviewImage.vue'
+import PrinterSelect from '@/components/PrinterSelect.vue'
+import AmsSlotGrid from '@/components/AmsSlotGrid.vue'
+import { normTray } from '@/utils/ams'
 import { adminApi } from '@/api/admin'
 import { toast } from '@/composables/useToast'
 
@@ -72,25 +75,65 @@ async function refreshDetail() {
   bambuddyJob.value = (await adminApi.getBambuddyJob(detail.value.id)).data
 }
 
-// 下发 Bambuddy（Phase 4：打印机下拉 + AMS 校验 + ams_mapping）
+// 下发 Bambuddy（打印机富下拉 + AMS 四格点选）
 const dispatchDialog = reactive({
   open: false, order: null,
   printerId: '',
   printers: [],
   preview: null,        // {printer, expected_filaments, match_result}
-  manualPicks: {},      // extruder_id -> tray_id（admin 手选覆盖不匹配项）
+  manualPicks: {},      // extruder_id -> tray_id（点选覆盖；预填系统推荐）
+  currentEid: null,     // 当前在配的 extruder（多 extruder 切换）
   previewLoading: false,
 })
 const dispatching = ref(false)
+
+// 选中打印机的 AMS 四格（normTray，tray_id = 下标+1，与 ams_mapping 同体系）
+const selectedPrinter = computed(() =>
+  dispatchDialog.printers.find((p) => p.bambuddy_printer_id === dispatchDialog.printerId) || null
+)
+const amsTrays = computed(() => {
+  const raw = selectedPrinter.value?.status_detail?.ams?.[0]?.tray || []
+  return raw.map((t, i) => normTray(t, i))
+})
+const expectedFilaments = computed(() => dispatchDialog.preview?.expected_filaments || [])
+const mappings = computed(() => dispatchDialog.preview?.match_result?.mappings || [])
+const currentMapping = computed(() =>
+  mappings.value.find((m) => String(m.extruder_id) === String(dispatchDialog.currentEid)) || null
+)
+// 第一个还没配料的 extruder（点选后自动跳过去）
+const firstUnassignedEid = computed(() => {
+  for (const m of mappings.value) {
+    if (dispatchDialog.manualPicks[m.extruder_id] == null) return m.extruder_id
+  }
+  return null
+})
+// 当前 extruder 已选的格
+const selectedSlotId = computed(() => {
+  const v = dispatchDialog.manualPicks[dispatchDialog.currentEid]
+  return v != null ? Number(v) : null
+})
+// 当前 extruder 的系统推荐格（柔和提示）
+const recommendedSlotId = computed(() => currentMapping.value?.actual_tray_id ?? null)
+// 其他 extruder 占用的格 → 角标 'E#'（当前 extruder 用 ring 高亮，不重复角标）
+const assignedLabels = computed(() => {
+  const labels = {}
+  for (const m of mappings.value) {
+    if (String(m.extruder_id) === String(dispatchDialog.currentEid)) continue
+    const tid = dispatchDialog.manualPicks[m.extruder_id]
+    if (tid != null) labels[tid] = 'E' + m.extruder_id
+  }
+  return labels
+})
 
 async function openDispatch(o) {
   dispatchDialog.order = o
   dispatchDialog.printerId = ''
   dispatchDialog.preview = null
   dispatchDialog.manualPicks = {}
+  dispatchDialog.currentEid = null
   dispatchDialog.printers = []
   dispatchDialog.open = true
-  // 拉启用打印机列表（下拉用）
+  // 拉启用打印机列表（富下拉用；含 status_detail 供 AMS 色点）
   try {
     const res = await adminApi.getPrinters()
     dispatchDialog.printers = (res.data?.items || []).filter((p) => p.enabled)
@@ -102,14 +145,26 @@ async function openDispatch(o) {
 async function onPickPrinter() {
   dispatchDialog.preview = null
   dispatchDialog.manualPicks = {}
+  dispatchDialog.currentEid = null
   if (!dispatchDialog.printerId) return
   dispatchDialog.previewLoading = true
   try {
     const res = await adminApi.dispatchPreview(
       dispatchDialog.order.id, Number(dispatchDialog.printerId)
     )
-    if (res.code === 200) dispatchDialog.preview = res.data
-    else toast.error(res.message || '预览失败')
+    if (res.code === 200) {
+      dispatchDialog.preview = res.data
+      // 预填系统推荐：匹配上的单子打开即可直接下发，无需手点
+      const picks = {}
+      for (const m of (res.data.match_result?.mappings || [])) {
+        if (m.actual_tray_id != null) picks[m.extruder_id] = m.actual_tray_id
+      }
+      dispatchDialog.manualPicks = picks
+      dispatchDialog.currentEid = firstUnassignedEid.value
+        ?? (res.data.expected_filaments?.[0]?.extruder_id ?? null)
+    } else {
+      toast.error(res.message || '预览失败')
+    }
   } catch (e) {
     toast.error(e.response?.data?.message || '预览失败')
   } finally {
@@ -117,64 +172,36 @@ async function onPickPrinter() {
   }
 }
 
-function matchBadge(mt) {
-  return {
-    exact: { label: '完全匹配', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' },
-    color: { label: '色匹配', cls: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300' },
-    type: { label: '材料匹配', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
-    none: { label: '不匹配', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' },
-  }[mt] || { label: mt || '-', cls: 'bg-zinc-100 text-zinc-500' }
-}
-
-function trayOptions(m) {
-  // 实际匹配 tray 排首位 + 候选，去重 by tray_id
-  const opts = []
-  const seen = new Set()
-  if (m.actual_tray_id != null && m.actual_tray) {
-    opts.push({
-      tray_id: m.actual_tray_id, type: m.actual_tray.type,
-      color: m.actual_tray.color, match_type: m.match_type,
-    })
-    seen.add(m.actual_tray_id)
-  }
-  for (const a of m.alternatives || []) {
-    if (!seen.has(a.tray_id)) {
-      opts.push(a)
-      seen.add(a.tray_id)
-    }
-  }
-  return opts
-}
-function selectedTrayId(m) {
-  if (dispatchDialog.manualPicks[m.extruder_id] != null) return dispatchDialog.manualPicks[m.extruder_id]
-  return m.actual_tray_id != null ? m.actual_tray_id : ''
-}
-function onPickTray(eid, val) {
+function onPickSlot(trayId) {
   dispatchDialog.manualPicks = {
     ...dispatchDialog.manualPicks,
-    [eid]: val === '' ? null : Number(val),
+    [dispatchDialog.currentEid]: trayId,
   }
+  const next = firstUnassignedEid.value
+  if (next != null) dispatchDialog.currentEid = next
+}
+function selectExtruder(eid) {
+  dispatchDialog.currentEid = eid
 }
 
+// 组装下发的 ams_mapping（extruder 升序的 tray_id 数组，1-based，透传给 Bambuddy）
 function effectiveMapping() {
-  // 全匹配用 match_result.ams_mapping；否则按手选组装；无期望返回 null（后端不校验）
-  const mr = dispatchDialog.preview?.match_result
-  if (!mr || !mr.mappings || !mr.mappings.length) return null
+  const ms = mappings.value
+  if (!ms.length) return null
   const picks = {}
-  for (const m of mr.mappings) {
-    const t = selectedTrayId(m)
-    if (t === '' || t == null) return null  // 有 extruder 未配齐
+  for (const m of ms) {
+    const t = dispatchDialog.manualPicks[m.extruder_id]
+    if (t == null) return null  // 有 extruder 未配齐
     picks[m.extruder_id] = t
   }
-  const ordered = mr.mappings
+  return ms
     .slice()
     .sort((a, b) => Number(a.extruder_id) - Number(b.extruder_id))
-  return ordered.map((m) => picks[m.extruder_id])
+    .map((m) => picks[m.extruder_id])
 }
 function canDispatch() {
   if (!dispatchDialog.printerId) return false
-  const exp = dispatchDialog.preview?.expected_filaments || []
-  if (!exp.length) return true  // 无期望 → 不校验，直接下发
+  if (!expectedFilaments.value.length) return true  // 无期望 → 不校验，直接下发
   return effectiveMapping() !== null
 }
 
@@ -699,18 +726,13 @@ onMounted(load)
               <DialogTitle class="text-lg font-semibold mb-1">下发 Bambuddy 打印</DialogTitle>
               <p class="text-xs text-zinc-400 mb-4">选择打印机后，系统对比 gcode 期望料盘与 AMS 实际料盘</p>
 
-              <!-- 打印机下拉 -->
+              <!-- 打印机选择（富下拉：状态徽章 + 4 色点 + 队列） -->
               <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">打印机</label>
-              <select
+              <PrinterSelect
                 v-model="dispatchDialog.printerId"
+                :printers="dispatchDialog.printers"
                 @change="onPickPrinter"
-                class="w-full h-10 px-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/10 dark:focus:ring-white/10"
-              >
-                <option value="">请选择…</option>
-                <option v-for="p in dispatchDialog.printers" :key="p.id" :value="p.bambuddy_printer_id">
-                  {{ p.public_name }}（bambuddy #{{ p.bambuddy_printer_id }}）
-                </option>
-              </select>
+              />
 
               <!-- 预览中 -->
               <div v-if="dispatchDialog.previewLoading" class="mt-4 text-sm text-zinc-400 flex items-center gap-2">
@@ -718,65 +740,55 @@ onMounted(load)
                 正在对比 AMS 料盘…
               </div>
 
-              <!-- AMS 对比 -->
+              <!-- AMS 选料（复用监控页四格，点选） -->
               <div v-if="dispatchDialog.preview" class="mt-4">
-                <div v-if="!(dispatchDialog.preview.expected_filaments || []).length" class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2">
-                  gcode 无 AMS 料盘信息，将直接下发（不校验料盘）。
+                <!-- 无期望：直接下发，四格仅展示 -->
+                <div v-if="!expectedFilaments.length" class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded-lg px-3 py-2 mb-2">
+                  gcode 无 AMS 料盘信息，将直接下发（不校验料盘）。下方为该机当前 AMS：
                 </div>
-                <div v-else>
-                  <div class="flex items-center justify-between mb-2">
-                    <span class="text-sm font-medium text-zinc-700 dark:text-zinc-300">AMS 料盘对比</span>
-                    <span
-                      v-if="dispatchDialog.preview.match_result.matched"
-                      class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
-                    >全部匹配，可直接下发</span>
-                    <span v-else class="text-xs px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">有不匹配，请手选替代料盘</span>
+                <template v-else>
+                  <!-- 本次需要的 extruder（可点切换；单 extruder 时仅一个） -->
+                  <div class="flex items-center gap-1.5 flex-wrap mb-2">
+                    <span class="text-xs text-zinc-400">本次需要</span>
+                    <button
+                      v-for="m in mappings" :key="m.extruder_id" type="button"
+                      @click="selectExtruder(m.extruder_id)"
+                      :class="[
+                        'flex items-center gap-1 px-2 py-0.5 rounded-lg border text-xs transition',
+                        String(m.extruder_id) === String(dispatchDialog.currentEid)
+                          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
+                          : 'border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-zinc-300'
+                      ]"
+                    >
+                      <span class="font-medium">E{{ m.extruder_id }}</span>
+                      <span class="inline-block w-2.5 h-2.5 rounded-full border border-black/10 dark:border-white/15"
+                            :style="{ background: m.expected.color || 'transparent' }"></span>
+                      <span>{{ m.expected.type || '?' }}</span>
+                      <span v-if="m.expected.used_g" class="text-zinc-400">~{{ Math.round(m.expected.used_g) }}g</span>
+                      <span v-if="dispatchDialog.manualPicks[m.extruder_id] != null" class="text-emerald-500">✓</span>
+                      <span v-else class="text-amber-500">待选</span>
+                    </button>
                   </div>
-                  <table class="w-full text-xs">
-                    <thead>
-                      <tr class="text-left text-zinc-400 border-b border-zinc-100 dark:border-zinc-800">
-                        <th class="py-1.5 pr-2 font-medium">挤出机</th>
-                        <th class="py-1.5 pr-2 font-medium">期望</th>
-                        <th class="py-1.5 pr-2 font-medium">实际料盘</th>
-                        <th class="py-1.5 pr-2 font-medium">匹配</th>
-                        <th class="py-1.5 font-medium">选择料盘</th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-y divide-zinc-50 dark:divide-zinc-800/60">
-                      <tr v-for="m in dispatchDialog.preview.match_result.mappings" :key="m.extruder_id">
-                        <td class="py-2 pr-2 text-zinc-500">#{{ m.extruder_id }}</td>
-                        <td class="py-2 pr-2">
-                          <div class="flex items-center gap-1.5">
-                            <span class="inline-block w-3.5 h-3.5 rounded-full border border-zinc-300 dark:border-zinc-600" :style="{ background: m.expected.color || 'transparent' }" />
-                            <span>{{ m.expected.type || '?' }}</span>
-                          </div>
-                        </td>
-                        <td class="py-2 pr-2">
-                          <div v-if="m.actual_tray" class="flex items-center gap-1.5">
-                            <span class="inline-block w-3.5 h-3.5 rounded-full border border-zinc-300 dark:border-zinc-600" :style="{ background: m.actual_tray.color || 'transparent' }" />
-                            <span>{{ m.actual_tray.type || '?' }}（槽{{ m.actual_tray.tray_id }}）</span>
-                          </div>
-                          <span v-else class="text-zinc-400">—</span>
-                        </td>
-                        <td class="py-2 pr-2">
-                          <span class="px-1.5 py-0.5 rounded-full text-[10px]" :class="matchBadge(m.match_type).cls">{{ matchBadge(m.match_type).label }}</span>
-                        </td>
-                        <td class="py-2">
-                          <select
-                            :value="selectedTrayId(m)"
-                            @change="onPickTray(m.extruder_id, $event.target.value)"
-                            class="h-8 px-2 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs focus:outline-none"
-                          >
-                            <option value="">（未选）</option>
-                            <option v-for="t in trayOptions(m)" :key="t.tray_id" :value="t.tray_id">
-                              槽{{ t.tray_id }} · {{ t.type || '?' }} · {{ t.match_type }}
-                            </option>
-                          </select>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                  <!-- 总览 -->
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs text-zinc-500">点选 AMS 料盘<span v-if="mappings.length > 1"> · 正在为 E{{ dispatchDialog.currentEid }} 选</span></span>
+                    <span v-if="effectiveMapping()" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">全部配齐，可下发</span>
+                    <span v-else class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">有待选料盘</span>
+                  </div>
+                </template>
+
+                <!-- 四格点选 -->
+                <AmsSlotGrid
+                  :trays="amsTrays"
+                  :selectable="expectedFilaments.length > 0"
+                  :selected-id="selectedSlotId"
+                  :recommended-id="recommendedSlotId"
+                  :assigned-labels="assignedLabels"
+                  @pick="onPickSlot"
+                />
+                <p class="mt-1.5 text-[10px] text-zinc-400 leading-relaxed">
+                  实色 = 有料可选 · 虚线 = 空槽 · <span class="text-sky-500">蓝框✓ = 推荐匹配</span> · 框内为余量百分比，悬停看克数
+                </p>
               </div>
 
               <div class="flex justify-end gap-2 mt-5">

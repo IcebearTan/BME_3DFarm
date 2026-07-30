@@ -974,12 +974,22 @@ def list_printers():
     printers = PrinterModel.query.order_by(PrinterModel.public_name).all()
     # 每台打印机当前活跃任务（completed_at 为空；按 started_at desc 取最近开始打印的一条，
     # started_at 为空则用 dispatched_at desc 兜底）→ 用 order_id 反查缩略图。
+    _TERMINAL_ORDER = (  # 订单终态：这些 job 不会再打，监控页不当"当前任务"
+        PrintOrderModel.STATUS_CANCELLED, PrintOrderModel.STATUS_CLOSED,
+        PrintOrderModel.STATUS_REFUNDED, PrintOrderModel.STATUS_PRINT_FAILED,
+    )
     active_job_by_printer = {}
+    # 每台打印机"当前活跃任务" = 未完成(completed_at IS NULL) 且 订单非终态 的 job 里：
+    #   ① started_at 有值（poller 在 PRINTING 时回填 = 已真正开打）优先；
+    #   ② 同级取最早 dispatched_at（FIFO 队首）。
+    # 避免 ①取消的订单仍被当活跃 ②提前下发到正在打印的机时误显示最新排队的 job 而非正在打的。
     for j in (BambuddyJobModel.query
               .filter(BambuddyJobModel.completed_at.is_(None))
               .filter(BambuddyJobModel.bambuddy_printer_id.isnot(None))
-              .order_by(BambuddyJobModel.started_at.desc(),
-                        BambuddyJobModel.dispatched_at.desc())):
+              .join(PrintOrderModel, BambuddyJobModel.order_id == PrintOrderModel.id)
+              .filter(PrintOrderModel.status.notin_(_TERMINAL_ORDER))
+              .order_by(BambuddyJobModel.started_at.is_(None),     # False(已开打) 排前
+                        BambuddyJobModel.dispatched_at.asc())):
         active_job_by_printer.setdefault(j.bambuddy_printer_id, j)
     items = []
     for p in printers:
@@ -993,6 +1003,8 @@ def list_printers():
             "enabled": p.enabled,
             "current_order_id": job.order_id if job else None,
             "current_order_no": job.order_no if job else None,
+            # 当前活跃任务用的 AMS 槽（1-based，与 ams_mapping 同体系）→ 监控页"使用中"高亮
+            "current_ams_mapping": job.ams_mapping if job else None,
         })
     return jsonify({"code": 200, "data": {"items": items}})
 

@@ -135,5 +135,6 @@ def _do_cancel(order_id):
         except BambuddyError:
             pass  # queue 项已不在也视为已取消
     job.bambuddy_queue_id = None
+    job.completed_at = datetime.now()  # 取消也算结束：监控页用 completed_at IS NULL 判活跃，填上后立即不再当"当前任务"
     db.session.commit()
     return {"status": "cancelled"}

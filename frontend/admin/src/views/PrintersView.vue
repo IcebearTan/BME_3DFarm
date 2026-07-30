@@ -2,6 +2,8 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import AppButton from '@/components/AppButton.vue'
 import PreviewImage from '@/components/PreviewImage.vue'
+import AmsSlotGrid from '@/components/AmsSlotGrid.vue'
+import { normTray } from '@/utils/ams'
 import { adminApi } from '@/api/admin'
 import { toast } from '@/composables/useToast'
 
@@ -43,54 +45,6 @@ function fmtRemaining(min) {
   if (h > 0) return `${h}h${String(m).padStart(2, '0')}m`
   return `${m}m`
 }
-// AMS 耗材色：Bambuddy tray_color 是无 # 的 RGB hex，转成可用色值；空/无效返回 null
-function trayHex(c) {
-  return c && c.length >= 6 ? '#' + c.slice(0, 6) : null
-}
-
-// Bambu 协议只有 hex、没有颜色名——用参考色最近邻（RGB 欧氏距离）推断中文名
-const COLOR_REF = [
-  ['FFFFFF', '白'], ['000000', '黑'], ['D9D9D9', '浅灰'], ['5A5A5A', '深灰'],
-  ['DB2F2F', '红'], ['F26B1F', '橙'], ['FFCF3F', '黄'], ['D4A04B', '金'],
-  ['1E9B54', '绿'], ['0B8AB8', '青'], ['1E9BFF', '蓝'], ['7C5BBA', '紫'],
-  ['E66FA5', '粉'], ['8B5A2B', '棕'],
-]
-function colorName(c) {
-  if (!c || c.length < 6) return null
-  const n = (s, o) => parseInt(s.slice(o, o + 2), 16)
-  const r = n(c, 0), g = n(c, 2), b = n(c, 4)
-  let best = null, bestD = Infinity
-  for (const [ref, name] of COLOR_REF) {
-    const d = (n(ref, 0) - r) ** 2 + (n(ref, 2) - g) ** 2 + (n(ref, 4) - b) ** 2
-    if (d < bestD) { bestD = d; best = name }
-  }
-  return best
-}
-
-// 耗材全名：品牌 + 类型 + 子系列，如 "Bambu PLA Matte"
-function fullName(t) {
-  const parts = []
-  if (t.brand) parts.push(t.brand)
-  const ts = [t.type, t.subtype].filter(Boolean).join(' ')
-  if (ts) parts.push(ts)
-  return parts.join(' ') || null
-}
-
-// 把 Bambuddy 原始 tray 字段归一化成 { color, type, subtype, brand, remain, slot }，
-// 使管理端能直接复用用户端 PrinterGrid 那套四格耗材渲染
-function normTray(t) {
-  return {
-    slot: t.id,
-    color: t.tray_color,
-    type: t.tray_type,
-    subtype: t.tray_sub_brands,
-    brand: t.tray_brand,
-    remain: t.remain != null && t.remain >= 0 ? t.remain : null,
-    remain_g: t.remain_g != null ? t.remain_g : null,
-    label_weight_g: t.label_weight_g != null ? t.label_weight_g : null,
-  }
-}
-
 async function stopPrint(p) {
   if (!window.confirm(`确认停止 ${p.public_name} 的当前打印？`)) return
   try {
@@ -173,51 +127,14 @@ async function stopPrint(p) {
             </div>
           </div>
 
-          <!-- AMS 耗材：四格色点 + 进度条（视觉与用户端 PrinterGrid 统一） -->
+          <!-- AMS 耗材：四格（复用 AmsSlotGrid：框内百分比 + hover 克数 + 使用中高亮） -->
           <div v-if="p.status_detail?.ams?.length">
-            <p class="text-xs text-zinc-400">AMS 耗材</p>
-            <div class="mt-2 grid grid-cols-4 gap-2">
-              <div v-for="t in (p.status_detail.ams[0]?.tray || []).map(normTray)" :key="t.slot ?? t.type"
-                   class="group relative rounded-lg border border-zinc-100 dark:border-zinc-800 px-2 py-1.5">
-                <!-- 行1：色点 + 材料类型 -->
-                <div class="flex items-center gap-1.5">
-                  <span class="w-2.5 h-2.5 rounded-full shrink-0"
-                        :class="trayHex(t.color)
-                          ? 'ring-1 ring-black/10 dark:ring-white/15'
-                          : 'border border-dashed border-zinc-300 dark:border-zinc-600'"
-                        :style="trayHex(t.color) ? { background: trayHex(t.color) } : null"></span>
-                  <span class="text-[11px] text-zinc-700 dark:text-zinc-300 truncate">{{ t.type || '空槽' }}</span>
-                </div>
-                <!-- 行2：余量进度条 + 百分比 -->
-                <div class="mt-1.5 flex items-center gap-1.5">
-                  <div class="flex-1 h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
-                    <div class="h-full rounded-full transition-all"
-                         :class="t.remain != null && t.remain < 20 ? 'bg-amber-500' : 'bg-zinc-500 dark:bg-zinc-300'"
-                         :style="{ width: (t.remain != null ? Math.max(2, t.remain) : 0) + '%' }"></div>
-                  </div>
-                  <span class="text-[10px] tabular-nums shrink-0"
-                        :class="t.remain != null && t.remain < 20 ? 'text-amber-500' : 'text-zinc-400'">
-                    {{ t.remain_g != null ? Math.round(t.remain_g) + 'g' : '—' }}
-                  </span>
-                </div>
-
-                <!-- hover 详情：颜色名 / 全名 / hex·余量（有则展示，无则少展示） -->
-                <div v-if="trayHex(t.color) || fullName(t)"
-                     class="absolute z-30 bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[220px]
-                            opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100
-                            pointer-events-none transition origin-bottom
-                            rounded-lg bg-zinc-900 dark:bg-zinc-700 px-3 py-2 shadow-lg ring-1 ring-black/10">
-                  <div class="flex items-center gap-1.5 text-xs font-medium text-white">
-                    <span class="w-2.5 h-2.5 rounded-full ring-1 ring-white/30"
-                          :style="trayHex(t.color) ? { background: trayHex(t.color) } : null"></span>
-                    {{ colorName(t.color) || '未知色' }}
-                  </div>
-                  <p v-if="fullName(t)" class="mt-1 text-[11px] text-white/80">{{ fullName(t) }}</p>
-                  <p class="mt-0.5 text-[10px] text-white/50 tabular-nums">
-                    #{{ (t.color || '------').slice(0, 6).toUpperCase() }} · {{ t.remain_g != null ? '余量 ' + Math.round(t.remain_g) + 'g' + (t.label_weight_g ? ' / ' + t.label_weight_g + 'g' : '') : '无料' }}
-                  </p>
-                </div>
-              </div>
+            <p class="text-xs text-zinc-400">AMS 耗材<span v-if="p.status === 'printing' && p.current_ams_mapping?.length" class="ml-1 text-emerald-500">· 使用中已高亮</span></p>
+            <div class="mt-2">
+              <AmsSlotGrid
+                :trays="(p.status_detail.ams[0]?.tray || []).map((t, i) => normTray(t, i))"
+                :active-ids="p.status === 'printing' ? (p.current_ams_mapping || []) : []"
+              />
             </div>
           </div>
 
