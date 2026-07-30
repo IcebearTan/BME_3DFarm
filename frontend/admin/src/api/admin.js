@@ -13,16 +13,21 @@ export const adminApi = {
 
   // 完成 / 失败 / 退款 / 取消（credit 联动）
   complete: (id, data) => service.post(`/admin/orders/${id}/complete`, data),
-  fail: (id) => service.post(`/admin/orders/${id}/fail`),
+  fail: (id, data) => service.post(`/admin/orders/${id}/fail`, data),
   refund: (id, data) => service.post(`/admin/orders/${id}/refund`, data),
-  cancel: (id) => service.post(`/admin/orders/${id}/cancel`),
+  cancel: (id, data) => service.post(`/admin/orders/${id}/cancel`, data || {}),
+  // 补充交付说明（取件/发货，通知客户）
+  deliveryNote: (id, data) => service.post(`/admin/orders/${id}/delivery-note`, data),
 
   // 发 credit
   grantCredit: (data) => service.post('/admin/credit/grant', data),
   grantCreditBatch: (data) => service.post('/admin/credit/grant-batch', data),
 
-  // 用户搜索（发 credit 选用户，Phase 1.5）
+  // 用户搜索（发 credit / 发公告 选用户，Phase 1.5）
   users: (q) => service.get('/admin/users', { params: { q } }),
+
+  // 公告（通知系统）
+  announce: (data) => service.post('/notifications/announce', data),
 
   // 费率配置（自动报价，Phase 1.5）
   getPricing: () => service.get('/admin/pricing'),

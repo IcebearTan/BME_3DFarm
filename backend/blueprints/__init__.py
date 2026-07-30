@@ -150,5 +150,6 @@ from .admin import bp as admin_bp
 from .webhook_bambuddy import bp as webhook_bp
 from .internal import bp as internal_bp
 from .printers import bp as printers_bp
+from .notifications import bp as notifications_bp
 
-__all__ = ["auth_bp", "orders_bp", "credit_bp", "admin_bp", "webhook_bp", "internal_bp", "printers_bp"]
+__all__ = ["auth_bp", "orders_bp", "credit_bp", "admin_bp", "webhook_bp", "internal_bp", "printers_bp", "notifications_bp"]

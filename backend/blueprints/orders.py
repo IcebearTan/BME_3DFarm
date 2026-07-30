@@ -78,6 +78,8 @@ def _order_to_dict(order, printer_name=None):
         "estimated_credit": str(order.estimated_credit) if order.estimated_credit is not None else None,
         "frozen_credit": str(order.frozen_credit),
         "customer_note": order.customer_note,
+        "fail_reason": order.fail_reason,
+        "completion_note": order.completion_note,
         "public_progress": order.public_progress,
         "remaining_seconds": order.remaining_seconds,
         "printer_name": printer_name,

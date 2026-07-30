@@ -19,6 +19,7 @@ from blueprints import (
     webhook_bp,
     internal_bp,
     printers_bp,
+    notifications_bp,
 )
 
 app = Flask(__name__)
@@ -42,6 +43,7 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(webhook_bp)
 app.register_blueprint(internal_bp)
 app.register_blueprint(printers_bp)
+app.register_blueprint(notifications_bp)
 
 
 @app.route("/health")

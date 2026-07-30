@@ -110,7 +110,8 @@ def test_fail_releases_frozen(app):
     client.post(f"/orders/{oid}/confirm", headers=_h(ctoken))  # frozen=40, avail=60
     client.post(f"/admin/orders/{oid}/approve", headers=_h(atoken))
     client.post(f"/admin/orders/{oid}/start", headers=_h(atoken))
-    r = client.post(f"/admin/orders/{oid}/fail", headers=_h(atoken))
+    r = client.post(f"/admin/orders/{oid}/fail", headers=_h(atoken),
+                    json={"reason": "测试失败"})
     assert r.get_json()["code"] == 200
     bal = _balance(client, ctoken)
     assert bal["available"] == "100.00"  # 60 + 40 释放

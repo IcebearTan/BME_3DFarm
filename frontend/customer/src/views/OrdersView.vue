@@ -4,7 +4,7 @@ import {
   Dialog, DialogPanel, DialogTitle,
   TransitionRoot, TransitionChild,
 } from '@headlessui/vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import OrderCard from '@/components/OrderCard.vue'
 import AppButton from '@/components/AppButton.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -12,6 +12,7 @@ import { ordersApi } from '@/api/orders'
 import { toast } from '@/composables/useToast'
 
 const router = useRouter()
+const route = useRoute()
 const orders = ref([])
 const loading = ref(false)
 const detail = ref(null)
@@ -78,7 +79,15 @@ async function doCancel(o) {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // 通知点击跳来时带 ?order=ID，自动展开该订单详情
+  const oid = Number(route.query.order)
+  if (oid) {
+    const o = orders.value.find(x => x.id === oid)
+    if (o) openDetail(o)
+  }
+})
 </script>
 
 <template>
@@ -151,6 +160,14 @@ onMounted(load)
                 <div v-if="detail.files?.length" class="flex justify-between">
                   <span class="text-zinc-400">文件</span>
                   <span class="truncate ml-4">{{ detail.files[0].original_filename }}</span>
+                </div>
+                <div v-if="detail.fail_reason" class="rounded-lg bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+                  <p class="text-xs text-rose-500 mb-0.5">失败原因</p>
+                  {{ detail.fail_reason }}
+                </div>
+                <div v-if="detail.completion_note" class="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+                  <p class="text-xs text-emerald-500 mb-0.5">取件 / 发货</p>
+                  {{ detail.completion_note }}
                 </div>
               </div>
               <div class="mt-6 flex justify-end gap-2">

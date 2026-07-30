@@ -38,6 +38,12 @@ const routes = [
     component: () => import('@/views/PrintersView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/notifications',
+    name: 'notifications',
+    component: () => import('@/views/NotificationsView.vue'),
+    meta: { requiresAuth: true },
+  },
 ]
 
 const router = createRouter({

@@ -32,6 +32,12 @@ const routes = [
     component: () => import('@/views/PrintersView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/announce',
+    name: 'announce',
+    component: () => import('@/views/AnnounceView.vue'),
+    meta: { requiresAuth: true },
+  },
 ]
 
 const router = createRouter({

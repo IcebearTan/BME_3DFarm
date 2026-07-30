@@ -158,6 +158,9 @@ class PrintOrderModel(db.Model):
     due_at = db.Column(db.DateTime, nullable=True)
     customer_note = db.Column(db.Text, nullable=True)
     admin_note = db.Column(db.Text, nullable=True)
+    # 通知相关：admin 填写的失败原因 / 成功后续（取件/发货安排），客户可见
+    fail_reason = db.Column(db.Text, nullable=True)
+    completion_note = db.Column(db.Text, nullable=True)
     # 进度
     public_progress = db.Column(db.Integer, nullable=False, server_default="0")  # 0-100
     remaining_seconds = db.Column(db.Integer, nullable=True)
@@ -295,3 +298,38 @@ class PricingConfigModel(db.Model):
     label = db.Column(db.String(100), nullable=True)
     unit = db.Column(db.String(20), nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+# ─────────────────────── 通知（公告 + 订单提醒） ───────────────────────
+class NotificationModel(db.Model):
+    """站内通知。设计照搬 BME notification 蓝本（系统 A）：
+
+    - 广播 = 写时扇出（每用户一行），不引入 broadcast + 关联表（千级用户够用）
+    - 已读 = is_read 布尔直接挂行（每用户有自己的行，天然隔离）
+    - 业务点（admin 订单操作等）主动调 notifications.create_notification() 扇出
+    """
+    __tablename__ = "notification"
+
+    CAT_SYSTEM = "system"   # 公告
+    CAT_ORDER = "order"     # 订单事件提醒
+
+    SRC_ANNOUNCEMENT = "announcement"
+    SRC_ORDER_FAILED = "order_failed"
+    SRC_ORDER_COMPLETED = "order_completed"
+    SRC_ORDER_CANCELLED = "order_cancelled"
+    SRC_ORDER_REFUNDED = "order_refunded"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)  # 接收人
+    title = db.Column(db.String(200), nullable=False)
+    content = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(20), nullable=False, index=True)
+    source_type = db.Column(db.String(20), nullable=True)   # 点击跳回源的依据
+    source_id = db.Column(db.Integer, nullable=True)        # 订单类 = order_id
+    is_read = db.Column(db.Boolean, nullable=False, server_default="0")
+    created_at = db.Column(db.DateTime, default=datetime.now, index=True)
+
+    # 复合索引：未读计数 WHERE user_id=? AND is_read=False 一次命中
+    __table_args__ = (
+        db.Index("ix_notification_user_read", "user_id", "is_read"),
+    )

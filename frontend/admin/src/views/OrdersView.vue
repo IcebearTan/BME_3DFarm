@@ -35,7 +35,7 @@ const detail = ref(null)
 const acting = ref(false)
 
 // 金额操作 dialog（quote / complete / refund 共用）
-const amountDialog = reactive({ open: false, action: '', order: null, amount: '', title: '' })
+const amountDialog = reactive({ open: false, action: '', order: null, amount: '', title: '', note: '' })
 
 // Bambuddy 任务（dispatch 自动建，这里只读展示状态）
 const bambuddyJob = ref(null)
@@ -274,12 +274,55 @@ function approve(o) {
 function start(o) {
   return simpleAction(o, '开始打印', (id) => adminApi.start(id))
 }
-function fail(o) {
-  return simpleAction(o, '标记失败', (id) => adminApi.fail(id))
+// 文本操作 dialog（fail 失败原因 / cancel 取消原因 / delivery-note 交付说明）。
+// 这些操作都附带「通知客户」的文本，不再一键直发。
+const noteDialog = reactive({
+  open: false, action: '', order: null, text: '', title: '', label: '', required: false,
+})
+
+function openNote(o, action, title, label, required) {
+  Object.assign(noteDialog, { open: true, action, order: o, text: '', title, label, required })
 }
-function cancel(o) {
-  if (!window.confirm('确认取消该订单？冻结额度会释放')) return
-  return simpleAction(o, '取消', (id) => adminApi.cancel(id))
+function openFail(o) {
+  openNote(o, 'fail', '标记打印失败', '失败原因（将通知客户）', true)
+}
+function openCancel(o) {
+  openNote(o, 'cancel', '取消订单', '取消原因（可选，将通知客户）', false)
+}
+function openDeliveryNote(o) {
+  openNote(o, 'delivery', '补充交付说明', '取件 / 发货说明（将通知客户）', true)
+}
+
+async function submitNote() {
+  const text = noteDialog.text.trim()
+  if (noteDialog.required && !text) {
+    toast.error(noteDialog.label + '不能为空')
+    return
+  }
+  acting.value = true
+  try {
+    const id = noteDialog.order.id
+    let res
+    if (noteDialog.action === 'fail') {
+      res = await adminApi.fail(id, { reason: text })
+    } else if (noteDialog.action === 'cancel') {
+      res = await adminApi.cancel(id, text ? { reason: text } : null)
+    } else {
+      res = await adminApi.deliveryNote(id, { completion_note: text })
+    }
+    if (res.code === 200) {
+      toast.success(noteDialog.title + '成功')
+      noteDialog.open = false
+      await load()
+      await refreshDetail()
+    } else {
+      toast.error(res.message || '操作失败')
+    }
+  } catch (e) {
+    toast.error(e.response?.data?.message || '操作失败')
+  } finally {
+    acting.value = false
+  }
 }
 
 function openAmount(o, action, title, defaultAmount) {
@@ -287,6 +330,7 @@ function openAmount(o, action, title, defaultAmount) {
   amountDialog.order = o
   amountDialog.amount = defaultAmount != null ? String(defaultAmount) : ''
   amountDialog.title = title
+  amountDialog.note = ''
   amountDialog.open = true
 }
 function openQuote(o) {
@@ -308,12 +352,17 @@ async function submitAmount() {
   acting.value = true
   try {
     let res
+    const note = amountDialog.note.trim()
     if (amountDialog.action === 'quote') {
       res = await adminApi.quote(amountDialog.order.id, { estimated_credit: amt })
     } else if (amountDialog.action === 'complete') {
-      res = await adminApi.complete(amountDialog.order.id, { actual_credit: amt })
+      res = await adminApi.complete(amountDialog.order.id, {
+        actual_credit: amt, ...(note ? { completion_note: note } : {}),
+      })
     } else {
-      res = await adminApi.refund(amountDialog.order.id, { amount: amt })
+      res = await adminApi.refund(amountDialog.order.id, {
+        amount: amt, ...(note ? { reason: note } : {}),
+      })
     }
     if (res.code === 200) {
       toast.success(amountDialog.title + '成功')
@@ -436,14 +485,18 @@ onMounted(load)
                   >手动开始</AppButton>
                   <AppButton v-if="o.status === 'PRINTING'" variant="success" size="xs" @click="openComplete(o)">完成</AppButton>
                   <AppButton
-                    v-if="o.status === 'PRINTING'" variant="warning" size="xs" :loading="acting"
-                    @click="fail(o)"
+                    v-if="o.status === 'PRINTING'" variant="warning" size="xs"
+                    @click="openFail(o)"
                   >失败</AppButton>
+                  <AppButton
+                    v-if="['PRINT_COMPLETED', 'QC_PENDING'].includes(o.status)"
+                    variant="primary" size="xs" @click="openDeliveryNote(o)"
+                  >交付说明</AppButton>
                   <AppButton
                     v-if="['PRINT_COMPLETED', 'QC_PENDING', 'NEED_REVIEW'].includes(o.status)"
                     variant="ghost" size="xs" @click="openRefund(o)"
                   >退款</AppButton>
-                  <AppButton v-if="canCancel(o.status)" variant="ghost" size="xs" @click="cancel(o)">取消</AppButton>
+                  <AppButton v-if="canCancel(o.status)" variant="ghost" size="xs" @click="openCancel(o)">取消</AppButton>
                 </div>
               </td>
             </tr>
@@ -503,6 +556,14 @@ onMounted(load)
                 <div v-if="detail.admin_note" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
                   <span class="text-zinc-400">管理备注</span>
                   <p class="mt-1 text-zinc-700 dark:text-zinc-300">{{ detail.admin_note }}</p>
+                </div>
+                <div v-if="detail.fail_reason" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  <span class="text-rose-500">失败原因</span>
+                  <p class="mt-1 text-rose-700 dark:text-rose-300">{{ detail.fail_reason }}</p>
+                </div>
+                <div v-if="detail.completion_note" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  <span class="text-emerald-500">取件 / 发货</span>
+                  <p class="mt-1 text-emerald-700 dark:text-emerald-300">{{ detail.completion_note }}</p>
                 </div>
                 <div v-if="detail.files?.length" class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
                   <span class="text-zinc-400">文件</span>
@@ -564,9 +625,53 @@ onMounted(load)
               <p v-if="amountDialog.action === 'complete'" class="mt-2 text-xs text-zinc-400">
                 实扣金额；低于冻结额会退差价，高于冻结额会补扣
               </p>
+              <div v-if="['complete', 'refund'].includes(amountDialog.action)" class="mt-3">
+                <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
+                  {{ amountDialog.action === 'complete' ? '完成备注（取件/发货，可选，将通知客户）' : '退款原因（可选，将通知客户）' }}
+                </label>
+                <textarea
+                  v-model="amountDialog.note" rows="2"
+                  class="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/10 dark:focus:ring-white/10"
+                ></textarea>
+              </div>
               <div class="flex justify-end gap-2 mt-5">
                 <AppButton variant="ghost" @click="amountDialog.open = false">取消</AppButton>
                 <AppButton :loading="acting" @click="submitAmount">确认</AppButton>
+              </div>
+            </DialogPanel>
+          </TransitionChild>
+        </div>
+      </Dialog>
+    </TransitionRoot>
+
+    <!-- 文本操作 Dialog（失败原因 / 取消原因 / 交付说明，均带通知客户） -->
+    <TransitionRoot appear :show="noteDialog.open" as="template">
+      <Dialog as="div" class="relative z-50" @close="noteDialog.open = false">
+        <TransitionChild
+          enter="duration-200" enter-from="opacity-0" enter-to="opacity-100"
+          leave="duration-150" leave-from="opacity-100" leave-to="opacity-0"
+        >
+          <div class="fixed inset-0 bg-black/30 backdrop-blur-sm" />
+        </TransitionChild>
+        <div class="fixed inset-0 flex items-center justify-center p-4">
+          <TransitionChild
+            enter="duration-200" enter-from="opacity-0 scale-95" enter-to="opacity-100 scale-100"
+            leave="duration-150" leave-from="opacity-100 scale-100" leave-to="opacity-0 scale-95"
+          >
+            <DialogPanel
+              class="w-full max-w-sm rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-100 dark:border-zinc-800 shadow-xl p-6"
+            >
+              <DialogTitle class="text-lg font-semibold mb-4">{{ noteDialog.title }}</DialogTitle>
+              <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
+                {{ noteDialog.label }}
+              </label>
+              <textarea
+                v-model="noteDialog.text" rows="3"
+                class="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900/10 dark:focus:ring-white/10"
+              ></textarea>
+              <div class="flex justify-end gap-2 mt-5">
+                <AppButton variant="ghost" @click="noteDialog.open = false">取消</AppButton>
+                <AppButton :loading="acting" @click="submitNote">确认</AppButton>
               </div>
             </DialogPanel>
           </TransitionChild>

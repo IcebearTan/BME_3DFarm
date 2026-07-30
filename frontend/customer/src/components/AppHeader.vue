@@ -6,6 +6,7 @@ import { useThemeStore } from '@/stores/theme'
 import { authApi } from '@/api/auth'
 import UserMenu from '@/components/UserMenu.vue'
 import Breadcrumb from '@/components/Breadcrumb.vue'
+import NotificationBell from '@/components/NotificationBell.vue'
 
 const auth = useAuthStore()
 const theme = useThemeStore()
@@ -46,6 +47,7 @@ onMounted(async () => {
         >
           <Sun v-if="theme.isDark" class="w-4 h-4" /><Moon v-else class="w-4 h-4" />
         </button>
+        <NotificationBell />
         <UserMenu />
       </div>
     </div>

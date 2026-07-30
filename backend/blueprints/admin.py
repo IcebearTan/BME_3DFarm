@@ -22,7 +22,7 @@ from flask_jwt_extended import jwt_required
 from exts import db
 from models import (
     PrintOrderModel, UserModel, CreditAccountModel, PricingConfigModel,
-    BambuddyJobModel, OrderFileModel, PrinterModel,
+    BambuddyJobModel, OrderFileModel, PrinterModel, NotificationModel,
 )
 from services import (
     CreditService,
@@ -39,6 +39,7 @@ from services.gcode_parser import (
 from services.pricing import PricingService, quote_to_jsonable
 from services.ams_matcher import match_ams
 from . import require_admin, _current_user
+from .notifications import create_notification
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -88,6 +89,8 @@ def _admin_order_to_dict(order, username=None):
         "due_at": order.due_at.isoformat() if order.due_at else None,
         "customer_note": order.customer_note,
         "admin_note": order.admin_note,
+        "fail_reason": order.fail_reason,
+        "completion_note": order.completion_note,
         "public_progress": order.public_progress,
         "remaining_seconds": order.remaining_seconds,
         "created_at": order.created_at.isoformat() if order.created_at else None,
@@ -228,7 +231,7 @@ def start_order(order_id):
 def complete_order(order_id):
     """标记完成：PRINTING→PRINT_COMPLETED + capture（实扣，多退少补）。
 
-    body: {actual_credit?: number} 不传则按 frozen_credit 实扣。
+    body: {actual_credit?: number, completion_note?: string}。
     """
     admin = _current_user()
     order = _get_order(order_id)
@@ -237,6 +240,7 @@ def complete_order(order_id):
     data = request.get_json(silent=True) or {}
     frozen = order.frozen_credit
     actual = _to_dec(data.get("actual_credit"))  # None 或 Decimal
+    completion_note = (data.get("completion_note") or "").strip() or None
 
     try:
         if frozen and frozen > 0:
@@ -246,9 +250,17 @@ def complete_order(order_id):
             order.actual_credit = actual if actual is not None else frozen
             order.frozen_credit = 0
         # else: 免计费路径（gcode.3mf 自动报价直进队列，未冻额度）→ 只转状态不实扣
+        if completion_note:
+            order.completion_note = completion_note
         OrderStateMachine.transition(
             order, S.STATUS_PRINT_COMPLETED, actor_id=admin.id,
             note="打印完成", _commit=False,
+        )
+        create_notification(
+            order.user_id, f"订单 {order.order_no} 已完成打印",
+            content="您的订单已完成打印" + (f"：{completion_note}" if completion_note else "，等待取件/发货通知"),
+            category=NotificationModel.CAT_ORDER, source_type=NotificationModel.SRC_ORDER_COMPLETED,
+            source_id=order.id,
         )
         db.session.commit()
     except InsufficientCreditError as e:
@@ -265,20 +277,34 @@ def complete_order(order_id):
 @jwt_required()
 @require_admin
 def fail_order(order_id):
-    """标记失败：PRINTING→PRINT_FAILED + release（释放冻结，进人工）。"""
+    """标记失败：PRINTING→PRINT_FAILED + release（释放冻结，进人工）。
+
+    body: {reason: string}（必填，反馈给客户的失败原因）。
+    """
     admin = _current_user()
     order = _get_order(order_id)
     if not order:
         return jsonify({"code": 404, "message": "订单不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()
+    if not reason:
+        return jsonify({"code": 400, "message": "请填写失败原因"}), 400
     try:
         if order.frozen_credit and order.frozen_credit > 0:
             CreditService.release(order.user_id, order.id, order.frozen_credit,
                                   reason="打印失败释放", version=1, _commit=False)
+        order.fail_reason = reason
         OrderStateMachine.transition(
             order, S.STATUS_PRINT_FAILED, actor_id=admin.id,
             note="打印失败", _commit=False,
         )
         order.frozen_credit = 0
+        create_notification(
+            order.user_id, f"订单 {order.order_no} 打印失败",
+            content=f"失败原因：{reason}（点击查看详情）",
+            category=NotificationModel.CAT_ORDER, source_type=NotificationModel.SRC_ORDER_FAILED,
+            source_id=order.id,
+        )
         db.session.commit()
     except (InsufficientCreditError, InvalidTransitionError) as e:
         db.session.rollback()
@@ -308,6 +334,12 @@ def refund_order(order_id):
             order, S.STATUS_REFUNDED, actor_id=admin.id,
             note=f"退款 {amount}", _commit=False,
         )
+        create_notification(
+            order.user_id, f"订单 {order.order_no} 已退款",
+            content=f"已退款 {amount} credit" + (f"：{reason}" if reason != "admin_refund" else ""),
+            category=NotificationModel.CAT_ORDER, source_type=NotificationModel.SRC_ORDER_REFUNDED,
+            source_id=order.id,
+        )
         db.session.commit()
     except (InsufficientCreditError, InvalidTransitionError) as e:
         db.session.rollback()
@@ -319,11 +351,13 @@ def refund_order(order_id):
 @jwt_required()
 @require_admin
 def cancel_order(order_id):
-    """管理员取消未打印订单：→CANCELLED + release。"""
+    """管理员取消未打印订单：→CANCELLED + release。body: {reason?}。"""
     admin = _current_user()
     order = _get_order(order_id)
     if not order:
         return jsonify({"code": 404, "message": "订单不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip() or None
     try:
         if order.frozen_credit and order.frozen_credit > 0:
             CreditService.release(order.user_id, order.id, order.frozen_credit,
@@ -333,11 +367,51 @@ def cancel_order(order_id):
             note="管理员取消", _commit=False,
         )
         order.frozen_credit = 0
+        create_notification(
+            order.user_id, f"订单 {order.order_no} 已取消",
+            content="管理员已取消该订单" + (f"：{reason}" if reason else ""),
+            category=NotificationModel.CAT_ORDER, source_type=NotificationModel.SRC_ORDER_CANCELLED,
+            source_id=order.id,
+        )
         db.session.commit()
     except (InsufficientCreditError, InvalidTransitionError) as e:
         db.session.rollback()
         return jsonify({"code": 409, "message": str(e)}), 409
     return jsonify({"code": 200, "message": "订单已取消", "data": _admin_order_to_dict(order)})
+
+
+@bp.route("/orders/<int:order_id>/delivery-note", methods=["POST"])
+@jwt_required()
+@require_admin
+def delivery_note(order_id):
+    """补充交付说明（取件/发货）：写 completion_note + 通知客户。
+
+    适用已完成订单（PRINT_COMPLETED/QC_PENDING/CLOSED）。body: {completion_note}（必填）。
+    多数订单由 bambuddy 自动完成（绕过 admin complete），故交付信息走此单独操作。
+    """
+    order = _get_order(order_id)
+    if not order:
+        return jsonify({"code": 404, "message": "订单不存在"}), 404
+    data = request.get_json(silent=True) or {}
+    note = (data.get("completion_note") or "").strip()
+    if not note:
+        return jsonify({"code": 400, "message": "completion_note 不能为空"}), 400
+    if order.status not in (S.STATUS_PRINT_COMPLETED, S.STATUS_QC_PENDING, S.STATUS_CLOSED):
+        return jsonify({"code": 409, "message": "订单尚未完成，无法填写交付说明"}), 409
+    try:
+        order.completion_note = note
+        create_notification(
+            order.user_id, f"订单 {order.order_no} 交付说明",
+            content=note,
+            category=NotificationModel.CAT_ORDER, source_type=NotificationModel.SRC_ORDER_COMPLETED,
+            source_id=order.id,
+        )
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"code": 500, "message": str(e)}), 500
+    return jsonify({"code": 200, "message": "交付说明已保存并通知客户",
+                    "data": _admin_order_to_dict(order)})
 
 
 # ─────────── credit 发放 ───────────

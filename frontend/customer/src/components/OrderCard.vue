@@ -74,6 +74,14 @@ function fmtRemaining(sec) {
         </span>
       </div>
 
+      <!-- 失败原因 / 交付说明 摘要（全文在详情） -->
+      <div v-if="order.fail_reason" class="mt-2 text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30 rounded-lg px-2.5 py-1.5 truncate">
+        失败：{{ order.fail_reason }}
+      </div>
+      <div v-else-if="order.completion_note" class="mt-2 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg px-2.5 py-1.5 truncate">
+        {{ order.completion_note }}
+      </div>
+
       <div class="mt-3 flex gap-2">
         <AppButton variant="subtle" size="sm" @click="emit('click')">详情</AppButton>
         <AppButton v-if="canConfirm" variant="primary" size="sm" @click="emit('confirm')">

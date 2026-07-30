@@ -24,12 +24,14 @@ from models import (
     BambuddyJobModel,
     PricingConfigModel,
     PrinterModel,
+    NotificationModel,
 )
 from services import CreditService
 from services.storage import storage
 from flask_jwt_extended import JWTManager
 from blueprints import (
     auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp, printers_bp,
+    notifications_bp,
 )
 
 # 费率默认种子（与 seed_pricing.py 一致；每个测试前重置，PricingService 依赖）
@@ -52,7 +54,7 @@ def app():
     db.init_app(app)
     storage.init_app(app)
     JWTManager(app)
-    for bp in (auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp, printers_bp):
+    for bp in (auth_bp, orders_bp, credit_bp, admin_bp, webhook_bp, internal_bp, printers_bp, notifications_bp):
         app.register_blueprint(bp)
     with app.app_context():
         db.create_all()
@@ -80,6 +82,7 @@ def _clean_tables(app):
         db.session.query(CreditAccountModel).delete()
         db.session.query(OrderFileModel).delete()
         db.session.query(PrintOrderModel).delete()
+        db.session.query(NotificationModel).delete()
         db.session.query(UserModel).delete()
         # pricing_config：清后重置默认费率（PricingService.calc 依赖）
         db.session.query(PricingConfigModel).delete()

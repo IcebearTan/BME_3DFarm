@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ShieldCheck, Sun, Moon, LogOut, ListOrdered, Coins, DollarSign, Printer } from 'lucide-vue-next'
+import { ShieldCheck, Sun, Moon, LogOut, ListOrdered, Coins, DollarSign, Printer, Megaphone } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { authApi } from '@/api/auth'
@@ -62,6 +62,9 @@ onMounted(async () => {
         </router-link>
         <router-link :to="{ name: 'pricing' }" v-slot="{ isActive }" :class="navClass(isActive)">
           <DollarSign class="w-4 h-4" /><span class="hidden sm:inline">费率</span>
+        </router-link>
+        <router-link :to="{ name: 'announce' }" v-slot="{ isActive }" :class="navClass(isActive)">
+          <Megaphone class="w-4 h-4" /><span class="hidden sm:inline">公告</span>
         </router-link>
       </nav>
 
