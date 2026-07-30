@@ -813,7 +813,7 @@ def upload_sliced(order_id):
 def list_printers():
     """打印机状态总览（含 status_detail 温度/进度；附每台当前活跃任务的 order，
     供监控页在"正在打印"时展示该订单缩略图）。"""
-    printers = PrinterModel.query.order_by(PrinterModel.id).all()
+    printers = PrinterModel.query.order_by(PrinterModel.public_name).all()
     # 每台打印机当前活跃任务（completed_at 为空；按 started_at desc 取最近开始打印的一条，
     # started_at 为空则用 dispatched_at desc 兜底）→ 用 order_id 反查缩略图。
     active_job_by_printer = {}

@@ -30,5 +30,5 @@ def list_printers():
     user = _current_user()
     if not user:
         return jsonify({"code": 404, "message": "用户不存在"}), 404
-    printers = PrinterModel.query.order_by(PrinterModel.id).all()
+    printers = PrinterModel.query.order_by(PrinterModel.public_name).all()
     return jsonify({"code": 200, "data": {"items": [_public_dict(p) for p in printers]}})
