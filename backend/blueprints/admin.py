@@ -45,12 +45,30 @@ bp = Blueprint("admin", __name__, url_prefix="/admin")
 S = PrintOrderModel
 
 
-def _admin_order_to_dict(order):
-    """管理员视角订单（完整字段，含 admin_note/actual_credit/预估等）。"""
+def _username(user_id):
+    u = UserModel.query.filter_by(id=user_id).first()
+    return u.username if u else None
+
+
+def _usernames(user_ids):
+    """批量 user_id → username（列表避免 N+1）。"""
+    if not user_ids:
+        return {}
+    return {u.id: u.username for u in UserModel.query.filter(UserModel.id.in_(user_ids)).all()}
+
+
+def _admin_order_to_dict(order, username=None):
+    """管理员视角订单（完整字段，含 admin_note/actual_credit/预估等）。
+
+    username 由调用方批量传入（列表避免 N+1）；为 None 时这里单查。
+    """
+    if username is None and order.user_id:
+        username = _username(order.user_id)
     return {
         "id": order.id,
         "order_no": order.order_no,
         "user_id": order.user_id,
+        "username": username,
         "status": order.status,
         "public_status": order.public_status,
         "material": order.material,
@@ -116,8 +134,9 @@ def list_orders():
         q = q.filter_by(user_id=user_id)
     q = q.order_by(PrintOrderModel.created_at.desc())
     pag = q.paginate(page=page, per_page=per_page, error_out=False)
+    uname_map = _usernames([o.user_id for o in pag.items if o.user_id])
     return jsonify({"code": 200, "data": {
-        "items": [_admin_order_to_dict(o) for o in pag.items],
+        "items": [_admin_order_to_dict(o, username=uname_map.get(o.user_id)) for o in pag.items],
         "total": pag.total, "page": pag.page,
         "per_page": pag.per_page, "pages": pag.pages,
     }})

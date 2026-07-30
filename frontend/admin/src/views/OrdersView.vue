@@ -37,10 +37,8 @@ const acting = ref(false)
 // 金额操作 dialog（quote / complete / refund 共用）
 const amountDialog = reactive({ open: false, action: '', order: null, amount: '', title: '' })
 
-// Bambuddy 任务绑定（Phase 2）
+// Bambuddy 任务（dispatch 自动建，这里只读展示状态）
 const bambuddyJob = ref(null)
-const bindForm = reactive({ bambuddy_printer_id: '', bambuddy_archive_id: '' })
-const binding = ref(false)
 
 async function load() {
   loading.value = true
@@ -72,33 +70,6 @@ async function refreshDetail() {
   if (!detail.value) return
   detail.value = (await adminApi.orderDetail(detail.value.id)).data
   bambuddyJob.value = (await adminApi.getBambuddyJob(detail.value.id)).data
-}
-async function doBind() {
-  if (!bindForm.bambuddy_printer_id) {
-    toast.error('请填 printer_id')
-    return
-  }
-  binding.value = true
-  try {
-    const res = await adminApi.bindBambuddy(detail.value.id, {
-      bambuddy_printer_id: Number(bindForm.bambuddy_printer_id),
-      bambuddy_archive_id: bindForm.bambuddy_archive_id
-        ? Number(bindForm.bambuddy_archive_id)
-        : undefined,
-    })
-    if (res.code === 200) {
-      toast.success('已绑定')
-      bambuddyJob.value = res.data
-      bindForm.bambuddy_printer_id = ''
-      bindForm.bambuddy_archive_id = ''
-    } else {
-      toast.error(res.message || '绑定失败')
-    }
-  } catch (e) {
-    toast.error(e.response?.data?.message || '失败')
-  } finally {
-    binding.value = false
-  }
 }
 
 // 下发 Bambuddy（Phase 4：打印机下拉 + AMS 校验 + ams_mapping）
@@ -364,6 +335,14 @@ function fmtDate(s) {
   const d = new Date(s)
   return isNaN(d) ? s : d.toLocaleString('zh-CN')
 }
+function fmtDuration(sec) {
+  if (sec == null || sec < 0) return '-'
+  const m = Math.round(sec / 60)
+  if (m < 1) return '<1m'
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  return h > 0 ? `${h}h${String(mm).padStart(2, '0')}m` : `${mm}m`
+}
 function canCancel(s) {
   return !POST_PRINT.includes(s)
 }
@@ -398,18 +377,19 @@ onMounted(load)
               <th class="px-5 py-2 font-medium">订单号</th>
               <th class="px-3 py-2 font-medium">客户</th>
               <th class="px-3 py-2 font-medium">材料</th>
+              <th class="px-3 py-2 font-medium">重量/时长</th>
               <th class="px-3 py-2 font-medium">状态</th>
-              <th class="px-3 py-2 font-medium text-right">报价/冻结</th>
+              <th class="px-3 py-2 font-medium">消耗</th>
               <th class="px-3 py-2 font-medium">创建</th>
-              <th class="px-5 py-2 font-medium text-right">操作</th>
+              <th class="px-5 py-2 font-medium">操作</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-zinc-50 dark:divide-zinc-800/60">
             <tr v-if="loading">
-              <td colspan="7" class="py-10 text-center text-zinc-400">加载中…</td>
+              <td colspan="8" class="py-10 text-center text-zinc-400">加载中…</td>
             </tr>
             <tr v-else-if="!orders.length">
-              <td colspan="7" class="py-10 text-center text-zinc-400">暂无订单</td>
+              <td colspan="8" class="py-10 text-center text-zinc-400">暂无订单</td>
             </tr>
             <tr v-for="o in orders" :key="o.id" class="hover:bg-zinc-50 dark:hover:bg-zinc-900/40">
               <td class="px-5 py-3">
@@ -420,21 +400,27 @@ onMounted(load)
                   {{ o.order_no }}
                 </button>
               </td>
-              <td class="px-3 py-3 text-zinc-500">#{{ o.user_id }}</td>
+              <td class="px-3 py-3">
+                <span class="text-zinc-700 dark:text-zinc-300">{{ o.username || '—' }}</span>
+                <span class="block text-xs text-zinc-400">#{{ o.user_id }}</span>
+              </td>
               <td class="px-3 py-3">
                 {{ o.material
                 }}<span class="text-zinc-400"> · {{ o.quantity }}</span>
               </td>
+              <td class="px-3 py-3 text-xs text-zinc-500 whitespace-nowrap">
+                <span>{{ o.estimate_weight_g ? o.estimate_weight_g + 'g' : '-' }}</span>
+                <span class="block text-zinc-400">{{ fmtDuration(o.estimate_print_seconds) }}</span>
+              </td>
               <td class="px-3 py-3"><StatusBadge :status="o.public_status" /></td>
-              <td class="px-3 py-3 text-right text-zinc-600 dark:text-zinc-400">
-                <span v-if="o.estimated_credit">{{ o.estimated_credit }}</span>
-                <span v-if="o.frozen_credit && o.frozen_credit !== '0.00' && o.frozen_credit !== '0'">
-                  / 冻{{ o.frozen_credit }}
-                </span>
+              <td class="px-3 py-3 text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
+                <span v-if="o.actual_credit">{{ o.actual_credit }}</span>
+                <span v-else-if="o.estimated_credit">{{ o.estimated_credit }}</span>
+                <span v-if="o.frozen_credit && o.frozen_credit !== '0.00' && o.frozen_credit !== '0'" class="text-zinc-400">/ 冻{{ o.frozen_credit }}</span>
               </td>
               <td class="px-3 py-3 text-xs text-zinc-400 whitespace-nowrap">{{ fmtDate(o.created_at) }}</td>
               <td class="px-5 py-3">
-                <div class="flex flex-wrap gap-1 justify-end">
+                <div class="flex flex-wrap gap-1">
                   <AppButton v-if="o.status === 'QUOTING'" variant="primary" size="xs" @click="openQuote(o)">报价</AppButton>
                   <AppButton
                     v-if="o.status === 'CREDIT_RESERVED'" variant="success" size="xs" :loading="acting"
@@ -500,9 +486,12 @@ onMounted(load)
               </div>
               <div v-if="detail" class="space-y-2 text-sm">
                 <div class="flex justify-between"><span class="text-zinc-400">订单号</span><span class="font-mono">{{ detail.order_no }}</span></div>
-                <div class="flex justify-between"><span class="text-zinc-400">客户 ID</span><span>#{{ detail.user_id }}</span></div>
+                <div class="flex justify-between"><span class="text-zinc-400">客户</span><span>{{ detail.username || '—' }} <span class="text-zinc-400">#{{ detail.user_id }}</span></span></div>
                 <div class="flex justify-between items-center"><span class="text-zinc-400">状态</span><StatusBadge :status="detail.public_status" /></div>
                 <div class="flex justify-between"><span class="text-zinc-400">材料/数量</span><span>{{ detail.material }} · {{ detail.quantity }}件</span></div>
+                <div class="flex justify-between"><span class="text-zinc-400">重量</span><span>{{ detail.estimate_weight_g ? detail.estimate_weight_g + 'g' : '-' }}</span></div>
+                <div class="flex justify-between"><span class="text-zinc-400">打印时长</span><span>{{ fmtDuration(detail.estimate_print_seconds) }}</span></div>
+                <div v-if="detail.public_progress > 0" class="flex justify-between"><span class="text-zinc-400">进度</span><span class="tabular-nums">{{ detail.public_progress }}%<span v-if="detail.remaining_seconds"> · 剩 {{ fmtDuration(detail.remaining_seconds) }}</span></span></div>
                 <div v-if="detail.color" class="flex justify-between"><span class="text-zinc-400">颜色</span><span>{{ detail.color }}</span></div>
                 <div class="flex justify-between"><span class="text-zinc-400">报价</span><span>{{ detail.estimated_credit || '-' }}</span></div>
                 <div class="flex justify-between"><span class="text-zinc-400">冻结</span><span>{{ detail.frozen_credit }}</span></div>
@@ -531,26 +520,14 @@ onMounted(load)
                     <AppButton size="xs" :loading="uploading" :disabled="!slicedFile" @click="doUploadSliced">上传+报价</AppButton>
                   </div>
                 </div>
-                <!-- Bambuddy 任务绑定（Phase 2）-->
+                <!-- Bambuddy 任务（dispatch 自动建，只读展示）-->
                 <div class="pt-2 border-t border-zinc-100 dark:border-zinc-800">
                   <span class="text-zinc-400">Bambuddy 任务</span>
-                  <p v-if="bambuddyJob" class="mt-1 text-xs text-zinc-500">
-                    printer #{{ bambuddyJob.bambuddy_printer_id }}
-                    <span v-if="bambuddyJob.bambuddy_archive_id">· archive {{ bambuddyJob.bambuddy_archive_id }}</span>
-                    · {{ bambuddyJob.mapping_confidence }}
+                  <p v-if="bambuddyJob && bambuddyJob.bambuddy_printer_id" class="mt-1 text-xs text-zinc-500">
+                    已下发到 printer #{{ bambuddyJob.bambuddy_printer_id }}
+                    <span v-if="bambuddyJob.bambuddy_queue_id">· 队列 #{{ bambuddyJob.bambuddy_queue_id }}</span>
                   </p>
-                  <p v-else class="mt-1 text-xs text-zinc-400">未绑定（Poller/Webhook 需先绑定才能匹配）</p>
-                  <div class="mt-2 flex gap-2">
-                    <input
-                      v-model="bindForm.bambuddy_printer_id" placeholder="printer_id"
-                      class="w-28 h-8 px-2 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs focus:outline-none"
-                    />
-                    <input
-                      v-model="bindForm.bambuddy_archive_id" placeholder="archive_id"
-                      class="w-28 h-8 px-2 rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-xs focus:outline-none"
-                    />
-                    <AppButton size="xs" :loading="binding" @click="doBind">绑定</AppButton>
-                  </div>
+                  <p v-else class="mt-1 text-xs text-zinc-400">未下发（点「下发」按钮自动创建）</p>
                 </div>
               </div>
               <div class="flex justify-end mt-5">
