@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
-  base: '/',
+  base: '/3dfarm/',
   plugins: [vue(), tailwindcss()],
   resolve: {
     alias: {

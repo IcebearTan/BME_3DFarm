@@ -35,7 +35,7 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory('/'),
+  history: createWebHistory('/3dfarm/'),
   routes,
   scrollBehavior: () => ({ top: 0 }),
 })
