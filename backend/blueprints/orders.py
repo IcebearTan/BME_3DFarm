@@ -16,7 +16,7 @@ from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required
 
 from exts import db
-from models import PrintOrderModel, OrderFileModel
+from models import PrintOrderModel, OrderFileModel, BambuddyJobModel, PrinterModel
 from services import (
     CreditService,
     OrderStateMachine,
@@ -34,8 +34,37 @@ ALLOWED_FILE_EXT = (".3mf", ".gcode.3mf")
 MAX_FILE_BYTES = 200 * 1024 * 1024  # 200MB
 
 
-def _order_to_dict(order):
-    """订单序列化（脱敏：客户看 public_status，不看 admin_note/actual_credit）。"""
+def _order_printer_name(order):
+    """订单当前所在打印机名（经 BambuddyJob 关联）；无则 None。"""
+    job = BambuddyJobModel.query.filter_by(order_id=order.id).first()
+    if not job or not job.bambuddy_printer_id:
+        return None
+    p = PrinterModel.query.filter_by(bambuddy_printer_id=job.bambuddy_printer_id).first()
+    return p.public_name if p else None
+
+
+def _order_printer_names(order_ids):
+    """批量 order_id → 打印机名（避免列表 N+1；同 order 多 job 取最新）。"""
+    if not order_ids:
+        return {}
+    jobs = BambuddyJobModel.query.filter(BambuddyJobModel.order_id.in_(order_ids)).all()
+    pids = {j.bambuddy_printer_id for j in jobs if j.bambuddy_printer_id}
+    pname = ({p.bambuddy_printer_id: p.public_name
+              for p in PrinterModel.query.filter(PrinterModel.bambuddy_printer_id.in_(pids))}
+             if pids else {})
+    by_order = {}
+    for j in sorted(jobs, key=lambda x: x.id):  # 后写覆盖 → 取最新 job 的打印机
+        by_order[j.order_id] = pname.get(j.bambuddy_printer_id)
+    return by_order
+
+
+def _order_to_dict(order, printer_name=None):
+    """订单序列化（脱敏：客户看 public_status，不看 admin_note/actual_credit）。
+
+    printer_name 由调用方批量传入（列表场景避免 N+1）；为 None 且订单打印中时这里单查。
+    """
+    if printer_name is None and order.status == PrintOrderModel.STATUS_PRINTING:
+        printer_name = _order_printer_name(order)
     return {
         "id": order.id,
         "order_no": order.order_no,
@@ -50,6 +79,8 @@ def _order_to_dict(order):
         "frozen_credit": str(order.frozen_credit),
         "customer_note": order.customer_note,
         "public_progress": order.public_progress,
+        "remaining_seconds": order.remaining_seconds,
+        "printer_name": printer_name,
         "is_manual_slice_path": bool(order.is_manual_slice_path),
         "parsed_filaments": order.parsed_filaments,
         "created_at": order.created_at.isoformat() if order.created_at else None,
@@ -330,8 +361,9 @@ def my_orders():
         q = q.filter_by(status=status)
     q = q.order_by(PrintOrderModel.created_at.desc())
     pag = q.paginate(page=page, per_page=per_page, error_out=False)
+    printer_map = _order_printer_names([o.id for o in pag.items])
     return jsonify({"code": 200, "data": {
-        "items": [_order_to_dict(o) for o in pag.items],
+        "items": [_order_to_dict(o, printer_name=printer_map.get(o.id)) for o in pag.items],
         "total": pag.total, "page": pag.page,
         "per_page": pag.per_page, "pages": pag.pages,
     }})
