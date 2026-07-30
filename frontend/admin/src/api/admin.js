@@ -19,6 +19,7 @@ export const adminApi = {
 
   // 发 credit
   grantCredit: (data) => service.post('/admin/credit/grant', data),
+  grantCreditBatch: (data) => service.post('/admin/credit/grant-batch', data),
 
   // 用户搜索（发 credit 选用户，Phase 1.5）
   users: (q) => service.get('/admin/users', { params: { q } }),

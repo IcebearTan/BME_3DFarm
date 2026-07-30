@@ -369,6 +369,71 @@ def grant_credit():
     })
 
 
+@bp.route("/credit/grant-batch", methods=["POST"])
+@jwt_required()
+@require_admin
+def grant_credit_batch():
+    """管理员批量发放 credit。body: {user_ids:[...], amount, reason?, batch_id?}。
+
+    逐用户发放、各自独立提交；部分失败不回滚已成功的，返回成功/失败明细。
+    传同一 batch_id 重试时：已成功的幂等 replay（不重复发），仅失败的重试。
+    """
+    admin = _current_user()
+    data = request.get_json(silent=True) or {}
+    user_ids = data.get("user_ids") or []
+    amount = data.get("amount")
+    reason = data.get("reason") or "管理员发放"
+    batch_id = data.get("batch_id") or uuid.uuid4().hex
+
+    if not isinstance(user_ids, list) or not user_ids:
+        return jsonify({"code": 400, "message": "user_ids 必填且为非空数组"}), 400
+    if amount is None:
+        return jsonify({"code": 400, "message": "amount 必填"}), 400
+    try:  # amount 对所有用户一致，非法直接拒，不进循环
+        amt = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError):
+        return jsonify({"code": 400, "message": "amount 非法"}), 400
+    if amt <= 0:
+        return jsonify({"code": 400, "message": "amount 必须 > 0"}), 400
+
+    unique_ids = list(dict.fromkeys(uid for uid in user_ids if uid is not None))
+    exist_ids = set(u.id for u in UserModel.query.filter(UserModel.id.in_(unique_ids)).all())
+    id_name = _usernames(unique_ids)
+
+    succeeded, failed = [], []
+    idem = f"grant:batch:{batch_id}"
+    for uid in unique_ids:
+        if uid not in exist_ids:
+            failed.append({"user_id": uid, "username": id_name.get(uid), "message": "用户不存在"})
+            continue
+        try:
+            result = CreditService.grant(
+                uid, amount, source="admin_grant", reason=reason,
+                operator_id=admin.id, idempotency_key=f"{idem}:{uid}",
+            )
+            succeeded.append({"user_id": uid, "username": id_name.get(uid), "replayed": result["replayed"]})
+        except InvalidAmountError as e:
+            failed.append({"user_id": uid, "username": id_name.get(uid), "message": str(e)})
+        except AccountNotFoundError:
+            failed.append({"user_id": uid, "username": id_name.get(uid), "message": "用户账户不存在"})
+        except Exception as e:  # 单用户意外错误不阻断整批
+            db.session.rollback()
+            failed.append({"user_id": uid, "username": id_name.get(uid), "message": str(e) or "发放失败"})
+
+    return jsonify({
+        "code": 200,
+        "message": f"发放完成：成功 {len(succeeded)} 个，失败 {len(failed)} 个",
+        "data": {
+            "batch_id": batch_id,
+            "total": len(unique_ids),
+            "success_count": len(succeeded),
+            "fail_count": len(failed),
+            "succeeded": succeeded,
+            "failed": failed,
+        },
+    })
+
+
 # ─────────── 用户搜索（发 credit 选用户用，Phase 1.5） ───────────
 @bp.route("/users", methods=["GET"])
 @jwt_required()
