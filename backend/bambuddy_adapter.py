@@ -77,6 +77,36 @@ class BambuddyAdapter:
         """打印机当前/历史任务（路径以 Bambuddy 实测为准，先试 /printers/{id}/jobs）。"""
         return self._request("GET", f"/printers/{printer_id}/jobs")
 
+    # ── AMS 耗材重量（Phase 4.5+，Bambuddy inventory 系统）──
+    def get_inventory_remain(self, printer_id):
+        """打印机各 AMS 槽位的剩余耗材克数。
+
+        GET /printers/{id}/inventory-remain → {"inventory_remain_g": {"<tray_id>": grams, ...}}。
+        key 是 tray.id（字符串），统一转 int 方便匹配；返回 {} 表示无数据/未配置 inventory。
+        Bambu 硬件的 tray.remain 恒为 -1（不上报），真实剩余克数只在此接口可得。
+        """
+        data = self._request("GET", f"/printers/{printer_id}/inventory-remain")
+        raw = (data or {}).get("inventory_remain_g") or {}
+        out = {}
+        for slot, grams in raw.items():
+            try:
+                out[int(slot)] = float(grams)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def list_inventory_assignments(self, printer_id=None):
+        """AMS 槽位 ↔ 料盘分配（含 spool 标重/已用/颜色名）。
+
+        GET /inventory/assignments → [{printer_id, ams_id, tray_id, spool:{label_weight,
+        weight_used, color_name, material, subtype, ...}}, ...]。printer_id 给定时按其过滤。
+        """
+        data = self._request("GET", "/inventory/assignments")
+        items = data if isinstance(data, list) else []
+        if printer_id is not None:
+            items = [a for a in items if a.get("printer_id") == printer_id]
+        return items
+
     # ── 写入档（Phase 3，路径/字段以 Bambuddy 实测为准）──
     def upload_archive(self, file_bytes, filename, content_type):
         """上传文件到 Bambuddy archive（multipart）。返回 {id/archive_id/uid: ...}。

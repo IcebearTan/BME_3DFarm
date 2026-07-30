@@ -130,6 +130,48 @@ def _map_printer_status(status_data):
     return PrinterModel.STATUS_OFFLINE
 
 
+def _enrich_ams_weights(status, bambuddy_pid, assign_map, adapter):
+    """把 Bambuddy inventory 的真实剩余克数/标重写进 status.ams[*].tray[*]。
+
+    Bambu 硬件 tray.remain 恒为 -1（不上报），前端拿不到重量。Bambuddy 的 inventory
+    系统才有真实值：inventory-remain 给每槽剩余克数，assignments 给料盘标重(label_weight)。
+    每个 tray 填：remain_g（剩余克数）、label_weight_g（标重）、remain（百分比，供进度条）。
+    inventory 不可达/无数据时静默跳过，tray 维持原值。
+    """
+    if not isinstance(status, dict):
+        return
+    ams = status.get("ams")
+    if not isinstance(ams, list) or not ams:
+        return
+    try:
+        remain_map = adapter.get_inventory_remain(bambuddy_pid)
+    except BambuddyError:
+        remain_map = {}
+    for unit in ams:
+        if not isinstance(unit, dict):
+            continue
+        for tray in (unit.get("tray") or []):
+            if not isinstance(tray, dict):
+                continue
+            slot = tray.get("id")
+            if slot is None:
+                continue
+            try:
+                slot_i = int(slot)
+            except (TypeError, ValueError):
+                continue
+            remain_g = remain_map.get(slot_i) if remain_map else None
+            if remain_g is None:
+                continue
+            spool = assign_map.get((bambuddy_pid, slot_i)) or {}
+            label_w = spool.get("label_weight")
+            base = label_w if (isinstance(label_w, (int, float)) and label_w > 0) else 1000
+            tray["remain_g"] = round(remain_g, 1)
+            tray["label_weight_g"] = int(base)
+            # remain 改用 inventory 算的百分比（覆盖硬件的 -1），供前端进度条
+            tray["remain"] = max(0, min(100, round(remain_g / base * 100)))
+
+
 def _do_sync_printers():
     """同步 Bambuddy 真机 + Virtual Printer → printer 表（status + status_detail）。"""
     adapter = BambuddyAdapter()
@@ -145,6 +187,17 @@ def _do_sync_printers():
         vp = adapter._request("GET", "/virtual-printers")
         for p in (vp.get("printers", []) if isinstance(vp, dict) else []):
             items.append(("virtual", p))
+    except BambuddyError:
+        pass
+
+    # AMS 料盘分配索引（一次性拉全量）：{(bambuddy_printer_id, tray_id): spool}
+    # 给各 tray 补标重(label_weight)/颜色名；失败则空，标重降级默认 1000g。
+    assign_map = {}
+    try:
+        for a in adapter.list_inventory_assignments():
+            pid_a, tid = a.get("printer_id"), a.get("tray_id")
+            if pid_a is not None and tid is not None:
+                assign_map[(pid_a, tid)] = a.get("spool") or {}
     except BambuddyError:
         pass
 
@@ -168,6 +221,8 @@ def _do_sync_printers():
             st = adapter.get_printer_status(pid) or {}
         except BambuddyError:
             st = {}
+        # 给 AMS 各 tray 补真实剩余克数/标重/百分比（Bambu 硬件 remain 恒 -1）
+        _enrich_ams_weights(st, pid, assign_map, adapter)
         row.status = _map_printer_status(st)
         row.status_detail = st or None
         row.last_seen_at = datetime.now()

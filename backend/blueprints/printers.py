@@ -32,8 +32,11 @@ def _ams_trays(p):
             "type": tray.get("tray_type") or None,
             "brand": tray.get("tray_brand") or None,
             "subtype": tray.get("tray_sub_brands") or None,
-            # remain < 0（空/未知）统一归一为 None，前端按空槽处理
+            # remain = 剩余百分比（Poller 从 Bambuddy inventory 算得，供进度条）；硬件 -1/未知→None
             "remain": remain if (isinstance(remain, (int, float)) and remain >= 0) else None,
+            # 真实剩余克数 / 料盘标重（Bambuddy inventory；Poller 未填则 None）
+            "remain_g": tray.get("remain_g") if isinstance(tray.get("remain_g"), (int, float)) else None,
+            "label_weight_g": tray.get("label_weight_g") if isinstance(tray.get("label_weight_g"), (int, float)) else None,
         })
     return trays
 

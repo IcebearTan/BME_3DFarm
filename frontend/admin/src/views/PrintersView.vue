@@ -86,6 +86,8 @@ function normTray(t) {
     subtype: t.tray_sub_brands,
     brand: t.tray_brand,
     remain: t.remain != null && t.remain >= 0 ? t.remain : null,
+    remain_g: t.remain_g != null ? t.remain_g : null,
+    label_weight_g: t.label_weight_g != null ? t.label_weight_g : null,
   }
 }
 
@@ -195,7 +197,7 @@ async function stopPrint(p) {
                   </div>
                   <span class="text-[10px] tabular-nums shrink-0"
                         :class="t.remain != null && t.remain < 20 ? 'text-amber-500' : 'text-zinc-400'">
-                    {{ t.remain != null ? t.remain + '%' : '—' }}
+                    {{ t.remain_g != null ? Math.round(t.remain_g) + 'g' : '—' }}
                   </span>
                 </div>
 
@@ -212,7 +214,7 @@ async function stopPrint(p) {
                   </div>
                   <p v-if="fullName(t)" class="mt-1 text-[11px] text-white/80">{{ fullName(t) }}</p>
                   <p class="mt-0.5 text-[10px] text-white/50 tabular-nums">
-                    #{{ (t.color || '------').slice(0, 6).toUpperCase() }} · {{ t.remain != null ? '余量 ' + t.remain + '%' : '无料' }}
+                    #{{ (t.color || '------').slice(0, 6).toUpperCase() }} · {{ t.remain_g != null ? '余量 ' + Math.round(t.remain_g) + 'g' + (t.label_weight_g ? ' / ' + t.label_weight_g + 'g' : '') : '无料' }}
                   </p>
                 </div>
               </div>
