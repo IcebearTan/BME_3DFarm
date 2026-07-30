@@ -31,7 +31,10 @@ def _do_sync():
     jobs = (
         db.session.query(BambuddyJobModel)
         .join(PrintOrderModel, PrintOrderModel.id == BambuddyJobModel.order_id)
-        .filter(PrintOrderModel.status == PrintOrderModel.STATUS_PRINTING)
+        .filter(PrintOrderModel.status.in_([
+            PrintOrderModel.STATUS_PRINTING,
+            PrintOrderModel.STATUS_READY_TO_PRINT,
+        ]))
         .all()
     )
     if not jobs:
@@ -46,7 +49,7 @@ def _do_sync():
             status = adapter.get_printer_status(job.bambuddy_printer_id)
             order = db.session.get(PrintOrderModel, job.order_id)
             if order:
-                _apply_printer_status(order, status)
+                _apply_printer_status(order, status, job)
                 synced += 1
         except BambuddyError:
             # 单台/单订单失败不拖垮整轮
@@ -55,11 +58,14 @@ def _do_sync():
     return {"synced": synced, "total": len(jobs)}
 
 
-def _apply_printer_status(order, status):
-    """根据 Bambuddy printer_status 更新订单进度 + 检测完成/失败。
+def _apply_printer_status(order, status, job=None):
+    """根据 Bambuddy printer_status 更新订单进度 + 推进状态机。
 
     Bambuddy printer_status 典型字段：gcode_state / mc_percent / mc_remaining_time。
-    gcode_state → 事件映射保守（实测后扩）：finish/succeeded→complete、failed→failed。
+    gcode_state → 事件映射：running 类→print_started（兜底 READY_TO_PRINT→PRINTING，
+    因 Bambuddy 不推送 print_started 事件）、finish/succeeded→complete、failed→failed。
+    非法转换（如 READY_TO_PRINT→PRINT_COMPLETED 跳级）由 OrderStateMachine 拦截。
+    job 起止时间在此回填（apply_event 只转订单状态、不动 BambuddyJob）。
     """
     if not isinstance(status, dict):
         return
@@ -68,26 +74,40 @@ def _apply_printer_status(order, status):
     mc_percent = status.get("mc_percent") or status.get("progress")
     mc_remaining = status.get("mc_remaining_time") or status.get("mc_remaining") or status.get("remaining_time")
 
-    if mc_percent is not None:
-        try:
-            order.public_progress = max(0, min(100, int(float(mc_percent))))
-        except (ValueError, TypeError):
-            pass
-    if mc_remaining is not None:
-        try:
-            # mc_remaining 来自 Bambuddy remaining_time，单位是分钟；字段名是 seconds → 换算
-            order.remaining_seconds = int(float(mc_remaining) * 60)
-        except (ValueError, TypeError):
-            pass
+    # 进度/剩余时间只在 PRINTING 时有意义（READY_TO_PRINT 尚未开打）
+    if order.status == PrintOrderModel.STATUS_PRINTING:
+        if mc_percent is not None:
+            try:
+                order.public_progress = max(0, min(100, int(float(mc_percent))))
+            except (ValueError, TypeError):
+                pass
+        if mc_remaining is not None:
+            try:
+                # mc_remaining 来自 Bambuddy remaining_time，单位是分钟；字段名是 seconds → 换算
+                order.remaining_seconds = int(float(mc_remaining) * 60)
+            except (ValueError, TypeError):
+                pass
 
     state_event = {
+        "running": "print_started",
+        "busy": "print_started",
+        "preparing": "print_started",
+        "pause": "print_started",
+        "paused": "print_started",
         "finish": "complete",
         "finished": "complete",
         "succeeded": "complete",
         "failed": "failed",
     }.get(gcode_state)
     if state_event:
-        apply_event(order, state_event)
+        applied = apply_event(order, state_event)
+        # 回填 job 起止时间（apply_event 不动 BambuddyJob）
+        if applied and job is not None:
+            now = datetime.now()
+            if order.status == PrintOrderModel.STATUS_PRINTING and not job.started_at:
+                job.started_at = now
+            elif order.status == PrintOrderModel.STATUS_PRINT_COMPLETED and not job.completed_at:
+                job.completed_at = now
 
     db.session.commit()
 
