@@ -37,6 +37,21 @@ def _extract_id(resp, *keys):
     return None
 
 
+def _queue_item_reusable(adapter, queue_id):
+    """旧 Bambuddy 队列项是否已无效（可重新下发）。
+
+    终态(failed/completed/cancelled)或已不存在(404) → True；
+    仍在(pending/printing)或查询出错 → False（保守不重发，避免重复打印）。
+    """
+    try:
+        qi = adapter.get_queue_item(queue_id)
+    except BambuddyError as e:
+        return "404" in str(e)   # 队列项已不存在 → 可重发；其他错误保守拦截
+    if not isinstance(qi, dict):
+        return False
+    return qi.get("status") in ("failed", "completed", "cancelled", "canceled")
+
+
 def _do_dispatch(order_id, printer_id, ams_mapping=None):
     """下发：MinIO 拉文件 → upload archive（复用已有 archive_id）→ add_to_queue → 建/更新 job。
 
@@ -62,12 +77,17 @@ def _do_dispatch(order_id, printer_id, ams_mapping=None):
         job = BambuddyJobModel(order_id=order_id, order_no=order.order_no)
         db.session.add(job)
     elif job.bambuddy_queue_id:
-        # 幂等：已下发过（queue_id 已设）就不重复 add_to_queue，
-        # 否则双击/重试会在 Bambuddy 队列里堆出重复任务，打印机把同一文件打多遍。
-        # 要重新下发须先 cancel_dispatch 清掉 queue_id。
-        return {"status": "already_dispatched",
-                "queue_id": job.bambuddy_queue_id,
-                "archive_id": job.bambuddy_archive_id}
+        # 幂等：已下发过（queue_id 已设）就不重复 add_to_queue，避免重复打印。
+        # 但若 Bambuddy 那边旧队列项已无效（failed/completed/cancelled 或已不存在），
+        # 视为可重发——清掉 queue_id 走下面的正常下发（archive 复用，不重传），
+        # 避免一次"启动前失败"（如 SD 卡问题）把订单永久卡死、再下发只能 already_dispatched。
+        if _queue_item_reusable(adapter, job.bambuddy_queue_id):
+            job.bambuddy_queue_id = None
+            db.session.commit()
+        else:
+            return {"status": "already_dispatched",
+                    "queue_id": job.bambuddy_queue_id,
+                    "archive_id": job.bambuddy_archive_id}
 
     # archive：复用 job.bambuddy_archive_id，否则从 MinIO 拉 → upload
     if job.bambuddy_archive_id:
@@ -101,12 +121,19 @@ def _do_dispatch(order_id, printer_id, ams_mapping=None):
 
 
 def _do_cancel(order_id):
-    """取消下发：remove queue item + 清 job.queue_id。"""
+    """取消下发：优先 POST /queue/{id}/cancel（妥善停止，不易制造 FAILED），失败回退 DELETE。"""
     job = BambuddyJobModel.query.filter_by(order_id=order_id).first()
     if not job or not job.bambuddy_queue_id:
         return {"status": "no_active_dispatch"}
     adapter = BambuddyAdapter()
-    adapter.remove_queue_item(job.bambuddy_queue_id)
+    try:
+        adapter.cancel_queue_item(job.bambuddy_queue_id)
+    except BambuddyError:
+        # cancel 端点不可用就回退到硬删除
+        try:
+            adapter.remove_queue_item(job.bambuddy_queue_id)
+        except BambuddyError:
+            pass  # queue 项已不在也视为已取消
     job.bambuddy_queue_id = None
     db.session.commit()
     return {"status": "cancelled"}

@@ -107,15 +107,24 @@ def sync_printers():
 
 
 def _map_printer_status(status_data):
-    """Bambuddy status（gcode_state/running）→ PrinterModel status 枚举。"""
+    """Bambuddy status → PrinterModel status 枚举（表达「当前可用性」）。
+
+    Bambu 的 gcode_state 是历史粘性状态：FAILED/FINISH 反映「上次结果」、不会自动回 IDLE。
+    故以 HMS 报警区分真故障：FAILED 且有 HMS→ERROR（停用）；FAILED 无 HMS→IDLE（取消/失败
+    残留，机器物理可用，下一个真实下单下发时打印机会自动从 FAILED 恢复）。
+    上次结果/温度/HMS 等细节另存 status_detail，不混进 status。
+    """
     if isinstance(status_data, dict):
         gs = (status_data.get("gcode_state") or status_data.get("state") or "").lower()
-        if gs in ("running", "busy", "preparing"):
+        if gs in ("running", "busy", "preparing", "pause", "paused"):
             return PrinterModel.STATUS_PRINTING
         if gs in ("idle", "finish", "finished", "standby"):
             return PrinterModel.STATUS_IDLE
         if gs in ("failed", "error", "fault"):
-            return PrinterModel.STATUS_ERROR
+            # 有 HMS = 真硬件故障→停用；无 HMS = 取消/失败残留→可用（新单顶掉即恢复）
+            if status_data.get("hms_errors"):
+                return PrinterModel.STATUS_ERROR
+            return PrinterModel.STATUS_IDLE
         if status_data.get("running") is True:
             return PrinterModel.STATUS_PRINTING
     return PrinterModel.STATUS_OFFLINE

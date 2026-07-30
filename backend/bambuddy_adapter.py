@@ -111,5 +111,21 @@ class BambuddyAdapter:
         return self._request("POST", "/queue/", json=body)
 
     def remove_queue_item(self, queue_id):
-        """从 Bambuddy 队列移除。"""
+        """从 Bambuddy 队列移除（硬删除 DELETE /queue/{id}）。"""
         return self._request("DELETE", f"/queue/{queue_id}")
+
+    def cancel_queue_item(self, queue_id):
+        """取消 Bambuddy 队列项（POST /queue/{id}/cancel）。
+
+        相比 DELETE 硬删，cancel 让 Bambuddy 妥善停止打印+移除，更不易让打印机
+        gcode 卡 FAILED。路径/方法以 Bambuddy openapi 为准，端点不可用时上层回退 DELETE。
+        """
+        return self._request("POST", f"/queue/{queue_id}/cancel")
+
+    # ── 打印机控制（Phase 4.5+，路径以 Bambuddy openapi 实测为准）──
+    def stop_print(self, printer_id):
+        """停止打印机当前打印（POST /printers/{printer_id}/print/stop）。
+
+        printer_id 为 Bambuddy 真机 id（整数）。无请求体。
+        """
+        return self._request("POST", f"/printers/{printer_id}/print/stop")
