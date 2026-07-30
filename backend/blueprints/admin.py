@@ -837,3 +837,25 @@ def list_printers():
             "current_order_no": job.order_no if job else None,
         })
     return jsonify({"code": 200, "data": {"items": items}})
+
+
+@bp.route("/printers/<int:printer_id>/stop", methods=["POST"])
+@jwt_required()
+@require_admin
+def stop_printer_print(printer_id):
+    """停止该打印机当前打印（调 Bambuddy POST /printers/{bambuddy_id}/print/stop）。
+
+    只发停止命令；订单/job 状态由 Poller 同步（与下发一致，避免状态机冲突）。
+    """
+    printer = db.session.get(PrinterModel, printer_id)
+    if not printer:
+        return jsonify({"code": 404, "message": "打印机不存在"}), 404
+    if not printer.bambuddy_printer_id:
+        return jsonify({"code": 409, "message": "该打印机未绑定 Bambuddy 真机 id，无法停止"}), 409
+    from bambuddy_adapter import BambuddyAdapter, BambuddyError
+    try:
+        BambuddyAdapter().stop_print(printer.bambuddy_printer_id)
+    except BambuddyError as e:
+        return jsonify({"code": 502, "message": f"Bambuddy 停止失败: {e}"}), 502
+    return jsonify({"code": 200, "message": "已发送停止命令",
+                    "data": {"bambuddy_printer_id": printer.bambuddy_printer_id}})

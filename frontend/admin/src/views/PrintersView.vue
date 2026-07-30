@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import AppButton from '@/components/AppButton.vue'
 import PreviewImage from '@/components/PreviewImage.vue'
 import { adminApi } from '@/api/admin'
+import { toast } from '@/composables/useToast'
 
 const printers = ref([])
 const loading = ref(false)
@@ -44,6 +45,21 @@ function fmtRemaining(min) {
 }
 function trayColor(c) {
   return c && c.length >= 6 ? '#' + c.slice(0, 6) : '#ccc'
+}
+
+async function stopPrint(p) {
+  if (!window.confirm(`确认停止 ${p.public_name} 的当前打印？`)) return
+  try {
+    const res = await adminApi.stopPrinter(p.id)
+    if (res.code === 200) {
+      toast.success('已发送停止命令（状态由 Poller 同步刷新）')
+      await load()
+    } else {
+      toast.error(res.message || '停止失败')
+    }
+  } catch (e) {
+    toast.error(e.response?.data?.message || '停止失败')
+  }
 }
 </script>
 
@@ -127,6 +143,10 @@ function trayColor(c) {
         </div>
 
         <p class="mt-3 text-xs text-zinc-400">最后同步：{{ p.last_seen_at || '-' }}</p>
+
+        <div v-if="p.status === 'printing'" class="mt-3">
+          <AppButton variant="warning" size="sm" @click="stopPrint(p)">停止打印</AppButton>
+        </div>
       </div>
     </div>
   </div>

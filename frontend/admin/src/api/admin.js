@@ -30,6 +30,7 @@ export const adminApi = {
 
   // 打印机监控（Phase 4.5，Poller 同步）
   getPrinters: () => service.get('/admin/printers'),
+  stopPrinter: (id) => service.post(`/admin/printers/${id}/stop`),
 
   // Bambuddy 任务绑定（Phase 2）
   getBambuddyJob: (id) => service.get(`/admin/orders/${id}/bambuddy-job`),
