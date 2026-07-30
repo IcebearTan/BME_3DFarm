@@ -35,7 +35,8 @@ class OrderStateMachine:
 
     # ── 合法转换表（§5.3 主线 + 异常分支）──
     # 任意"未打印"状态（DRAFT..READY_TO_PRINT）可 → CANCELLED；
-    # 进入 PRINTING 后不可直接取消，须走 PRINT_FAILED/退款流程。
+    # 进入 PRINTING / 已完成 不可直接取消；但打印失败（PRINT_FAILED）允许客户取消
+    # （frozen 已由 fail 释放、未实扣，客户放弃失败订单即 CANCELLED）。
     TRANSITIONS = {
         S.STATUS_DRAFT:            {S.STATUS_FILE_UPLOADED, S.STATUS_CANCELLED},
         S.STATUS_FILE_UPLOADED:    {S.STATUS_QUOTING, S.STATUS_CANCELLED},
@@ -49,7 +50,7 @@ class OrderStateMachine:
         S.STATUS_PRINTING:         {S.STATUS_PRINT_COMPLETED, S.STATUS_PRINT_FAILED},
         S.STATUS_PRINT_COMPLETED:  {S.STATUS_QC_PENDING, S.STATUS_REFUNDED},
         S.STATUS_QC_PENDING:       {S.STATUS_CLOSED, S.STATUS_REFUNDED},
-        S.STATUS_PRINT_FAILED:     {S.STATUS_NEED_REVIEW},
+        S.STATUS_PRINT_FAILED:     {S.STATUS_NEED_REVIEW, S.STATUS_CANCELLED},
         S.STATUS_NEED_REVIEW:      {S.STATUS_READY_TO_PRINT,  # 重打
                                     S.STATUS_REFUNDED, S.STATUS_CANCELLED},
         S.STATUS_REJECTED:         {S.STATUS_REFUNDED},
