@@ -26,8 +26,7 @@ migrations/versions/__pycache__/
 
 # 本地 Docker compose 覆盖（机器特定，如 3306 端口冲突规避）+ Celery beat 调度文件
 docker-compose.override.yml
-celerybeat-schedule
-celerybeat-schedule.db
+celerybeat-schedule*
 
 # 本地验证脚本（连开发库走真实 HTTP，不提交）
 backend/dev_*.py
