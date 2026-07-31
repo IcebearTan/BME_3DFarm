@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "capture_target": "http://172.25.56.19:18000",
+    "captured_at": "2026-07-31T17:27:19+0800",
+    "note": "read-only capture"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "virtual-printers",
+    "query": {},
+    "headers": {
+      "x-api-key": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "printers": [],
+      "models": {
+        "BL-P001": "X1C",
+        "BL-P002": "X1",
+        "C13": "X1E",
+        "N6": "X2D",
+        "N9": "A2L",
+        "C11": "P1P",
+        "C12": "P1S",
+        "N7": "P2S",
+        "N2S": "A1",
+        "N1": "A1 Mini",
+        "O1D": "H2D",
+        "O1E": "H2D Pro",
+        "O2D": "H2D Pro",
+        "O1C": "H2C",
+        "O1C2": "H2C",
+        "O1S": "H2S"
+      }
+    },
+    "body_encoding": "json"
+  }
+}

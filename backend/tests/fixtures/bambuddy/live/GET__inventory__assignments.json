@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "capture_target": "http://127.0.0.1:8000",
+    "captured_at": "2026-07-31T17:08:32+0800",
+    "note": "read-only capture"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "inventory/assignments",
+    "query": {},
+    "headers": {
+      "x-api-key": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [],
+    "body_encoding": "json"
+  }
+}

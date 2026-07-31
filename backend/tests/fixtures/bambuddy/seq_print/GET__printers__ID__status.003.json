@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成生产形态序列：第 4 轮 finish 100%（完成 → PRINT_COMPLETED + capture）"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}/status",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": {"gcode_state": "finish", "mc_percent": 100, "mc_remaining_time": 0},
+    "body_encoding": "json"
+  }
+}

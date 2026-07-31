@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成生产形态序列：第 3 轮 running 85% / 剩 1 分钟"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}/status",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": {"gcode_state": "running", "mc_percent": 85, "mc_remaining_time": 1},
+    "body_encoding": "json"
+  }
+}

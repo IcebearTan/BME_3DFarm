@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成：槽 0 剩余 850.5g（真实克数，替代硬件恒 -1）"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}/inventory-remain",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": {"inventory_remain_g": {"0": 850.5}},
+    "body_encoding": "json"
+  }
+}

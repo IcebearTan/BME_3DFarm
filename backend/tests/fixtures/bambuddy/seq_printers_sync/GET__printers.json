@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成：一台真机（生产形态元数据）"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": [{"id": 10, "name": "Real-P1S", "model_name": "P1S"}],
+    "body_encoding": "json"
+  }
+}

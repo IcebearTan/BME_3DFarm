@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成：一台虚拟打印机（dev VP 形态）"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "virtual-printers",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": {"printers": [
+      {"id": 1, "name": "VP-P1S", "model_name": "P1S", "enabled": true,
+       "status": {"running": false}}
+    ]},
+    "body_encoding": "json"
+  }
+}

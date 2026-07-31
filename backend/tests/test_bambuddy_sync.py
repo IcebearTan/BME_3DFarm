@@ -240,6 +240,11 @@ def test_sync_printers_real_and_virtual(app, monkeypatch):
              "enabled": True, "status": {"running": False}}
         ]} if "virtual" in p.lower() else {},
     )
+    # 新 poller（AMS 富化提交后）逐台调 get_printer_status：真机 running → printing，VP 空 → offline
+    monkeypatch.setattr(
+        poller.BambuddyAdapter, "get_printer_status",
+        lambda self, pid: {"gcode_state": "running"} if pid == 10 else {},
+    )
     with app.app_context():
         result = poller._do_sync_printers()
         assert result["printers_synced"] == 2

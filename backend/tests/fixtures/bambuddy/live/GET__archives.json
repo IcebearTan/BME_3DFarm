@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "capture_target": "http://127.0.0.1:8000",
+    "captured_at": "2026-07-31T17:08:31+0800",
+    "note": "read-only capture"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "archives",
+    "query": {},
+    "headers": {
+      "x-api-key": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "id": 1,
+        "printer_id": null,
+        "project_id": null,
+        "project_name": null,
+        "filename": "机器人笔筒205底座高18mm.gcode.3mf",
+        "file_path": "archive/unassigned/20260712_122631_机器人笔筒205底座高18mm/机器人笔筒205底座高18mm.gcode.3mf",
+        "file_size": 1888125,
+        "content_hash": "51754bd1a32af15a30fa24762f0158b237ae4a82d3b5ea5734ef72b26438d8d5",
+        "thumbnail_path": "archive/unassigned/20260712_122631_机器人笔筒205底座高18mm/thumbnail.png",
+        "timelapse_path": null,
+        "source_3mf_path": null,
+        "f3d_path": null,
+        "duplicates": null,
+        "duplicate_count": 0,
+        "duplicate_sequence": 0,
+        "original_archive_id": null,
+        "object_count": 1,
+        "print_name": "机器人笔筒205底座高18mm",
+        "print_time_seconds": 8657,
+        "actual_time_seconds": null,
+        "time_accuracy": null,
+        "filament_used_grams": 36.56,
+        "filament_type": "PLA",
+        "filament_color": "#00AE42",
+        "layer_height": 0.12,
+        "total_layers": 374,
+        "nozzle_diameter": 0.4,
+        "bed_temperature": null,
+        "bed_type": "Textured PEI Plate",
+        "nozzle_temperature": 220,
+        "sliced_for_model": "P1S",
+        "status": "archived",
+        "started_at": null,
+        "completed_at": "2026-07-12T04:26:31.330823",
+        "extra_data": {
+          "sliced_for_model": "P1S",
+          "printable_objects": {
+            "69": "机器人笔筒205底座高18mm.STL"
+          },
+          "print_time_seconds": 8657,
+          "filament_used_grams": 36.56,
+          "filament_slots": [
+            {
+              "slot_id": 1,
+              "used_g": 36.56,
+              "type": "PLA",
+              "color": "#00AE42"
+            }
+          ],
+          "filament_type": "PLA",
+          "filament_color": "#00AE42",
+          "layer_height": 0.12,
+          "nozzle_diameter": 0.4,
+          "nozzle_temperature": 220,
+          "bed_type": "Textured PEI Plate",
+          "total_layers": 374,
+          "filament_used_mm": 12064.8,
+          "designer": "",
+          "print_name": ""
+        },
+        "makerworld_url": null,
+        "designer": "",
+        "external_url": null,
+        "is_favorite": false,
+        "tags": null,
+        "notes": null,
+        "cost": 0.91,
+        "photos": null,
+        "failure_reason": null,
+        "quantity": 1,
+        "energy_kwh": null,
+        "energy_cost": null,
+        "created_at": "2026-07-12T04:26:31",
+        "created_by_id": null,
+        "created_by_username": null,
+        "run_count": 0,
+        "last_run_at": null,
+        "total_filament_actual_grams": null,
+        "successful_run_count": 0,
+        "failed_run_count": 0
+      }
+    ],
+    "body_encoding": "json"
+  }
+}

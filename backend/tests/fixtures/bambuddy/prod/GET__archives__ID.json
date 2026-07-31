@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "capture_target": "http://172.25.56.19:18000",
+    "captured_at": "2026-07-31T17:27:19+0800",
+    "note": "read-only capture"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "archives/{id}",
+    "query": {},
+    "headers": {
+      "x-api-key": ""
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "detail": "Archive not found"
+    },
+    "body_encoding": "json"
+  }
+}

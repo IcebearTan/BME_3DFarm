@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "capture_target": "http://172.25.56.19:18000",
+    "captured_at": "2026-07-31T17:27:19+0800",
+    "note": "read-only capture"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}",
+    "query": {},
+    "headers": {
+      "x-api-key": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "name": "BME-112-C",
+      "serial_number": "01P00C5A2200910",
+      "ip_address": "192.168.1.101",
+      "model": "P1S",
+      "location": null,
+      "auto_archive": true,
+      "external_camera_url": null,
+      "external_camera_type": null,
+      "external_camera_enabled": false,
+      "external_camera_snapshot_url": null,
+      "camera_rotation": 0,
+      "id": 1,
+      "is_active": true,
+      "nozzle_count": 1,
+      "print_hours_offset": 0.0,
+      "plate_detection_enabled": false,
+      "plate_detection_roi": null,
+      "created_at": "2026-07-30T06:01:38",
+      "updated_at": "2026-07-30T09:10:02",
+      "access_code": "5dd0b3cd"
+    },
+    "body_encoding": "json"
+  }
+}

@@ -4,6 +4,7 @@ SQLite 的 SELECT ... FOR UPDATE 是 no-op，并发语义测不了，必须用�
 独立测试库避免污染开发库 bme_3dfarm。
 """
 import os
+import uuid
 
 # 必须在任何 import config 之前覆盖 DB_NAME，让 config 读到测试库
 os.environ["DB_NAME"] = os.environ.get("TEST_DB_NAME", "bme_3dfarm_test")
@@ -26,7 +27,7 @@ from models import (
     PrinterModel,
     NotificationModel,
 )
-from services import CreditService
+from services import CreditService, OrderStateMachine
 from services.storage import storage
 from flask_jwt_extended import JWTManager
 from blueprints import (
@@ -156,3 +157,82 @@ def tx_count(app, user_id, type_filter=None):
         if type_filter:
             q = q.filter_by(type=type_filter)
         return q.count()
+
+
+# ═══════════════════ Bambuddy 测试基础设施 ═══════════════════
+
+# fixture corpus 根目录（live=本地采集 / prod=生产采集 / seq_*=合成序列）
+FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "bambuddy")
+
+
+@pytest.fixture
+def make_ready_order(app):
+    """建一个 READY_TO_PRINT + 绑 BambuddyJob + 冻结 credit 的订单。返回 order.id。
+
+    走真实事件核心（OrderStateMachine + CreditService）到 READY_TO_PRINT，
+    绑定已知 archive_id 的 job，供 webhook/poller 生命周期驱动直接喂事件。
+    """
+    counter = {"i": 0}
+
+    def _make(user_id, frozen=30, archive_id=999, printer_id=2):
+        with app.app_context():
+            counter["i"] += 1
+            order = PrintOrderModel(
+                order_no=f"PO{uuid.uuid4().hex[:8]}", user_id=user_id,
+                status=PrintOrderModel.STATUS_DRAFT, material="PLA", quantity=1,
+            )
+            db.session.add(order)
+            db.session.commit()
+            order.estimated_credit = frozen
+            # DRAFT → … → WAITING_CONFIRM → freeze → CREDIT_RESERVED → … → READY_TO_PRINT
+            for s in (PrintOrderModel.STATUS_FILE_UPLOADED, PrintOrderModel.STATUS_QUOTING,
+                      PrintOrderModel.STATUS_WAITING_CONFIRM):
+                OrderStateMachine.transition(order, s)
+            CreditService.freeze(user_id, order.id, frozen, quote_version=1)
+            OrderStateMachine.transition(order, PrintOrderModel.STATUS_CREDIT_RESERVED)
+            order.frozen_credit = frozen
+            for s in (PrintOrderModel.STATUS_REVIEWING, PrintOrderModel.STATUS_APPROVED,
+                      PrintOrderModel.STATUS_READY_TO_PRINT):
+                OrderStateMachine.transition(order, s)
+            db.session.commit()
+            job = BambuddyJobModel(
+                order_id=order.id, order_no=order.order_no,
+                bambuddy_printer_id=printer_id, bambuddy_archive_id=archive_id,
+                filename=f"{order.order_no}.gcode.3mf", mapping_confidence="manual",
+            )
+            db.session.add(job)
+            db.session.commit()
+            return order.id
+
+    return _make
+
+
+@pytest.fixture
+def replay_proxy(app):
+    """函数级：起一个 Bambuddy replay 代理线程，返回工厂。
+
+    用法：
+        p = replay_proxy(FIXTURES_DIR / "seq_print")
+        point_bambuddy(app, p["base_url"])
+
+    teardown 时停代理 + 还原 BAMBUDDY_BASE_URL（app 是 session 级，防止配置污染后续测试）。
+    """
+    servers = []
+    original_base_url = app.config.get("BAMBUDDY_BASE_URL")
+
+    def _make(fixtures_dir, **kwargs):
+        from tools.bambuddy_recorder import ReplayServer
+        srv = ReplayServer(mode="replay", fixtures_dir=fixtures_dir, port=0, **kwargs)
+        srv.start()
+        servers.append(srv)
+        return {"base_url": srv.base_url(), "reset": srv.reset_sequence, "server": srv}
+
+    yield _make
+    for srv in servers:
+        srv.stop()
+    app.config["BAMBUDDY_BASE_URL"] = original_base_url
+
+
+def point_bambuddy(app, base_url):
+    """把 app 的 Bambuddy 指向给定 base_url（adapter 每次构造时读 config，即刻生效）。"""
+    app.config["BAMBUDDY_BASE_URL"] = base_url

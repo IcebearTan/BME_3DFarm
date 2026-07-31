@@ -1,0 +1,27 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成序列：真机 id 10 running + AMS 槽 0（Bambu 硬件 tray.remain=-1）"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}/status",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": {
+      "gcode_state": "running",
+      "mc_percent": 42,
+      "mc_remaining_time": 3,
+      "ams": [{"id": "0", "tray": [
+        {"id": "0", "state": 1, "tray_type": "PLA", "tray_color": "00AE42FF",
+         "tray_info_idx": "GFA00", "remain": -1}
+      ]}]
+    },
+    "body_encoding": "json"
+  }
+}

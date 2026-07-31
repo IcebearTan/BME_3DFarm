@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成：槽位 0 ↔ 料盘（标重 1000g）分配"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "inventory/assignments",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": [
+      {"printer_id": 10, "ams_id": 0, "tray_id": 0,
+       "spool": {"label_weight": 1000, "color_name": "#00AE42"}}
+    ],
+    "body_encoding": "json"
+  }
+}

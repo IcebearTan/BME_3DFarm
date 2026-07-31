@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "capture_target": "http://127.0.0.1:8000",
+    "captured_at": "2026-07-31T17:08:31+0800",
+    "note": "read-only capture"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}/inventory-remain",
+    "query": {},
+    "headers": {
+      "x-api-key": ""
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "inventory_remain_g": {}
+    },
+    "body_encoding": "json"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "capture_target": "synthetic",
+    "captured_at": "2026-07-31",
+    "note": "合成序列：虚拟打印机 id 1 idle（无 AMS）"
+  },
+  "request": {
+    "method": "GET",
+    "logical_path": "printers/{id}/status",
+    "query": {},
+    "headers": {"x-api-key": ""}
+  },
+  "response": {
+    "status": 200,
+    "headers": {"content-type": "application/json"},
+    "body": {"gcode_state": "idle", "mc_percent": 0, "mc_remaining_time": 0},
+    "body_encoding": "json"
+  }
+}
