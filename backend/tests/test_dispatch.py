@@ -207,19 +207,21 @@ def test_admin_dispatch_no_sliced_file_rejected(app, make_user, monkeypatch):
 
 # ═══════════════════════════ Phase 4：ams_mapping 透传 + AMS 校验 ═══════════════════════════
 def test_do_dispatch_passes_and_persists_ams_mapping(app, make_user, monkeypatch):
-    """_do_dispatch(ams_mapping=[1,2]) → 透传给 add_to_queue + 持久化到 job + 返回。"""
+    """_do_dispatch(ams_mapping=[1,2]) → 发给 Bambuddy 的是 0-based 值（[1,2]→[0,1]），
+    内部 1-based 仍持久化/返回 [1,2]（监控页"使用中"高亮比对用，不能改）。"""
     uid = make_user()
     oid = _setup_ready_order(app, uid)
+    _make_printer(app, 7, [(3, "PLA", "DB2F2FFF", 100, None)] * 4)
     queue_calls = []
     _mock_adapter(monkeypatch, queue_calls=queue_calls)
     from tasks import dispatch
     with app.app_context():
         result = dispatch._do_dispatch(oid, 7, ams_mapping=[1, 2])
         assert result["status"] == "dispatched"
-        assert result["ams_mapping"] == [1, 2]
-        # 透传给 add_to_queue
-        assert queue_calls[0]["ams_mapping"] == [1, 2]
-        # 持久化到 job
+        assert result["ams_mapping"] == [1, 2]          # 内部 1-based 原样返回
+        # 发给 Bambuddy 的是 0-based（v→v−1）：[1,2]→[0,1]
+        assert queue_calls[0]["ams_mapping"] == [0, 1]
+        # 持久化到 job 的是内部 1-based（高亮比对用，不能改）
         job = BambuddyJobModel.query.filter_by(order_id=oid).first()
         assert job.ams_mapping == [1, 2]
 
@@ -270,8 +272,8 @@ def test_dispatch_auto_match_uses_ams_mapping(app, make_user, monkeypatch):
     r = client.post(f"/admin/orders/{oid}/dispatch", headers=_h(atoken),
                     json={"bambuddy_printer_id": 7})
     assert r.get_json()["code"] == 200, r.get_json()
-    # auto-match 算出 ams_mapping=[1] 并透传
-    assert queue_calls[0]["ams_mapping"] == [1]
+    # auto-match 算出内部 ams_mapping=[1]；下发 Bambuddy 转 0-based → [0]
+    assert queue_calls[0]["ams_mapping"] == [0]
 
 
 def test_dispatch_mismatch_returns_409(app, make_user, monkeypatch):
@@ -309,8 +311,8 @@ def test_dispatch_explicit_ams_mapping_skips_check(app, make_user, monkeypatch):
     r = client.post(f"/admin/orders/{oid}/dispatch", headers=_h(atoken),
                     json={"bambuddy_printer_id": 7, "ams_mapping": [1]})
     assert r.get_json()["code"] == 200, r.get_json()
-    # admin 手选的 [1] 原样透传，未被 match_ams 改写
-    assert queue_calls[0]["ams_mapping"] == [1]
+    # admin 手选内部 [1]（不被 match_ams 改写）；下发 Bambuddy 转 0-based → [0]
+    assert queue_calls[0]["ams_mapping"] == [0]
 
 
 def test_dispatch_preview_returns_match_result(app, make_user, monkeypatch):

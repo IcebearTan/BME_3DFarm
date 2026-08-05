@@ -9,7 +9,7 @@ from datetime import datetime
 
 from celery_app import celery
 from exts import db
-from models import PrintOrderModel, OrderFileModel, BambuddyJobModel
+from models import PrintOrderModel, OrderFileModel, BambuddyJobModel, PrinterModel
 from bambuddy_adapter import BambuddyAdapter, BambuddyError
 from services.storage import storage
 
@@ -50,6 +50,19 @@ def _queue_item_reusable(adapter, queue_id):
     if not isinstance(qi, dict):
         return False
     return qi.get("status") in ("failed", "completed", "cancelled", "canceled")
+
+
+def _to_bambuddy_mapping(ams_mapping, printer_id=None):
+    """内部 1-based tray_id → Bambuddy 取料值（off-by-one：v → v−1，转 0-based）。
+
+    Bambuddy/Bambu 的 ams_mapping 用 0-based tray id（0..N-1）；仓库内部 tray_id 是数组
+    下标+1（1-based）。实测证据：4 槽 AMS 上发值 4 越界报 0500-4004，而历史任务
+    ams_mapping=[3]、[2,1] 均 completed（值 1/2/3 正常）→ 取值范围 0-3。故下发前每个值 −1。
+    job.ams_mapping 仍存内部 1-based（监控页"使用中"高亮按内部 tray_id 匹配，不能改）。
+    """
+    if not isinstance(ams_mapping, list) or not ams_mapping:
+        return ams_mapping
+    return [int(v) - 1 for v in ams_mapping]
 
 
 def _do_dispatch(order_id, printer_id, ams_mapping=None):
@@ -105,7 +118,10 @@ def _do_dispatch(order_id, printer_id, ams_mapping=None):
         if not archive_id:
             raise BambuddyError(f"upload_archive 无 id: {upload_resp}")
 
-    queue_resp = adapter.add_to_queue(archive_id, printer_id, ams_mapping=ams_mapping)
+    # ams_mapping 内部 1-based → Bambuddy 0-based（off-by-one，v→v−1）。
+    # job.ams_mapping 仍存内部 1-based（监控页"使用中"高亮按内部 tray_id 匹配，不能动）。
+    bambuddy_mapping = _to_bambuddy_mapping(ams_mapping, printer_id)
+    queue_resp = adapter.add_to_queue(archive_id, printer_id, ams_mapping=bambuddy_mapping)
     queue_id = _extract_id(queue_resp, "id", "queue_id", "uid")
 
     job.bambuddy_printer_id = printer_id
